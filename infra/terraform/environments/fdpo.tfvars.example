@@ -1,0 +1,53 @@
+# Existing RG: MCAPS-Hybrid-REQ-67039-2023-ajanakiraman.
+# RG metadata eastus is NOT proof of gateway/model regional availability.
+subscription_id     = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+resource_group_name = "rg-aiflux-fdpo-dev"
+location            = "eastus"
+name_prefix         = "aiflux-fdpo-dev"
+deployment_approved = false
+
+# Supply reviewed values before attempting a plan. None are production defaults.
+publisher_email = ""
+apim_capacity   = 1
+app_service_sku = ""
+sql_sku         = ""
+log_retention_days = 30
+registry_resource_id = ""
+
+entra = {
+  audience            = ""
+  client_id           = ""
+  home_tenant_id      = ""
+  bootstrap_object_id = ""
+}
+sql_admin = {
+  login     = ""
+  object_id = ""
+  tenant_id = ""
+}
+network = {
+  address_space       = ""
+  app_gateway_subnet  = ""
+  app_gateway_ip      = ""
+  private_link_subnet = ""
+  apim_subnet         = ""
+  apps_subnet         = ""
+  endpoints_subnet    = ""
+}
+edge = {
+  origin_hostname             = ""
+  certificate_secret_id       = ""
+  certificate_vault_id        = ""
+  private_link_location       = ""
+  request_timeout_seconds     = 120
+  app_gateway_timeout_seconds = 120
+  waf_body_limit_kb            = 128
+  waf_inspection_limit_kb      = 128
+  zones                       = ["1", "2", "3"]
+}
+apps = {
+  api      = { image = "", registry_url = "", port = 8000, health_path = "/health" }
+  customer = { image = "", registry_url = "", port = 8080, health_path = "/" }
+  admin    = { image = "", registry_url = "", port = 8080, health_path = "/admin/" }
+}
+tags = { environment = "development", owner = "Singtel IDS" }

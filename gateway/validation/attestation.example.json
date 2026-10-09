@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "status": "not_attested",
+  "environment": null,
+  "apim_resource_id": null,
+  "apim_sku": null,
+  "gateway_region": null,
+  "public_edge_base_url": null,
+  "reviewer_object_ids": [],
+  "observed_at": null,
+  "expires_at": null,
+  "native_artifact": {
+    "relative_path": null,
+    "sha256": null,
+    "documented_arm_api_version": null,
+    "official_schema_source": null,
+    "reproducible_create_update_destroy": false
+  },
+  "catalog_sha256": null,
+  "policy_sha256": null,
+  "provider_lock_sha256": null,
+  "models": [],
+  "evidence": []
+}

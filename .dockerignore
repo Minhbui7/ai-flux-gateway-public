@@ -1,0 +1,15 @@
+.git
+.venv
+node_modules
+**/node_modules
+**/dist
+.env
+**/.env
+**/.env.*
+**/*.db
+**/.terraform
+**/*.tfstate*
+**/.tools
+**/__pycache__
+test-results
+playwright-report

@@ -1,0 +1,10 @@
+.tools/
+**/.terraform/
+**/*.tfstate*
+**/*.tfplan
+**/crash.log
+**/*.tfvars
+**/backend.hcl
+**/provider-schema.json
+**/live-evidence.json
+!**/*.tfvars.example
