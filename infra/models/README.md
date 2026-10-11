@@ -2,7 +2,9 @@
 
 This independent Terraform root owns only the Sweden Central AIServices account,
 OpenAI model deployments in East US and Sweden Central, and account-scoped gateway
-OpenAI inference RBAC. The existing East US Foundry account is read-only data:
+OpenAI inference RBAC and Sweden Cognitive Services User access for Anthropic.
+The main root already owns Cognitive Services User access in East US.
+The existing East US Foundry account is read-only data:
 its PII service, authentication, and main infrastructure state are not modified.
 Do not run this configuration using the main infrastructure backend or state.
 
@@ -34,11 +36,11 @@ completion limit. It records only HTTP status, schema presence, and token usage;
 neither access tokens nor prompts/completion text are logged. This is a direct
 backend smoke check, not proof of gateway guardrails.
 
-Claude Sonnet 5.5's live catalog name is `claude-sonnet-5-5`; choose the latest
-supported version from the approved regions. Its deployment is intentionally not
-included until an authorized operator supplies the required Anthropic industry
-declaration and completes any applicable marketplace/terms onboarding. Deployment
-authorization is not authorization to accept additional legal terms.
+The operator manually deployed Claude Haiku 5.5 (`claude-haiku-5-5`, version2) in
+both regions. This root does not own or import those deployments. Anthropic requires
+Cognitive Services User access; the OpenAI-only role is insufficient. Backend
+access does not prove native unified API translation or gateway safety coverage.
+Deployment authorization is not authorization to accept additional legal terms.
 
 References:
 - [Deployment ARM schema](https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts/deployments)

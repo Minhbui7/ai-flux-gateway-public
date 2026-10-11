@@ -56,8 +56,12 @@ resource "azurerm_api_management_product_api" "blocked" {
 }
 
 locals {
-  model_descriptor = jsondecode(file("${path.module}/../models/model-backends.json"))
-  dev_aliases      = toset(["gpt-5.6-luna", "gpt-5.6-sol"])
+  model_descriptor = jsondecode(
+    fileexists("${path.module}/../models/model-backends.json") ?
+    file("${path.module}/../models/model-backends.json") :
+    jsonencode({ subscription_id = var.subscription_id, backends = [] })
+  )
+  dev_aliases = toset(["gpt-5.6-luna", "gpt-5.6-sol"])
   dev_model_backends = {
     for backend in local.model_descriptor.backends :
     "${backend.alias}-${backend.region}" => backend
@@ -318,11 +322,12 @@ resource "azapi_resource" "monitor_diagnostic" {
   name      = "azuremonitor"
   body = {
     properties = {
-      loggerId    = azapi_resource.monitor_logger.id
-      alwaysLog   = "allErrors"
-      sampling    = { samplingType = "fixed", percentage = 100 }
-      logClientIp = false
-      verbosity   = "error"
+      loggerId           = azapi_resource.monitor_logger.id
+      alwaysLog          = "allErrors"
+      sampling           = { samplingType = "fixed", percentage = 100 }
+      logClientIp        = false
+      verbosity          = "information"
+      largeLanguageModel = { logs = "enabled" }
       frontend = {
         request = {
           headers = []
@@ -356,5 +361,8 @@ resource "azurerm_monitor_diagnostic_setting" "apim" {
   log_analytics_destination_type = "Dedicated"
   enabled_log {
     category = "GatewayLogs"
+  }
+  enabled_log {
+    category = "GatewayLlmLogs"
   }
 }

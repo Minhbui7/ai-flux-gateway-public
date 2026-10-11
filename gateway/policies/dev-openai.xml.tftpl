@@ -12,7 +12,16 @@
       </when>
     </choose>
     <choose>
-      <when condition='@(context.Request.Url.Query.Keys.Any(name => !string.Equals(name, "subscription-key", StringComparison.OrdinalIgnoreCase)))'>
+      <when condition='@(context.Request.Headers.ContainsKey("Ocp-Apim-Subscription-Key") &amp;&amp; context.Request.Headers.ContainsKey("Authorization"))'>
+        <return-response>
+          <set-status code="400" reason="Conflicting authentication methods" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-body>{"error":{"message":"Supply either a subscription-key header or bearer authentication, not both.","type":"invalid_request_error","param":null,"code":"conflicting_credentials"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Request.Url.Query.Keys.Any())'>
         <return-response>
           <set-status code="400" reason="Unsupported query parameter" />
           <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
@@ -45,7 +54,9 @@
             </return-response>
           </when>
         </choose>
-        <validate-content unspecified-content-type-action="prevent" max-size="16384" size-exceeded-action="prevent" />
+        <validate-content id="aiflux-request-validation" unspecified-content-type-action="prevent" max-size="16384" size-exceeded-action="prevent">
+          <content type="application/json" validate-as="json" action="prevent" />
+        </validate-content>
         <set-header name="x-aiflux-original-body" exists-action="override">
           <value><![CDATA[@(context.Request.Body.As<string>(preserveContent: true))]]></value>
         </set-header>
@@ -83,8 +94,8 @@
           </when>
         </choose>
         <set-variable name="aiflux-model" value='@((string)JObject.Parse((string)context.Variables["aiflux-request-json"])["model"])' />
-        <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@((string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
-        <llm-token-limit counter-key='@((string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" />
+        <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@("rpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
+        <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" />
         <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
           <categories output-type="EightSeverityLevels">
             <category name="Hate" threshold="${safety_threshold}" />
@@ -215,6 +226,46 @@
     </choose>
   </outbound>
   <on-error>
+    <choose>
+      <when condition='@(context.LastError.Reason == "SubscriptionKeyNotFound" || context.LastError.Reason == "SubscriptionKeyInvalid")'>
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"A valid active subscription key is required.","type":"invalid_request_error","param":null,"code":"invalid_subscription_key"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "aiflux-request-validation")'>
+        <return-response>
+          <set-status code="400" reason="Invalid request" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"The request must match the bounded development JSON schema.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded")'>
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>@(context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
+          <set-body>{"error":{"message":"The subscription model limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "ContentSafetyPolicyViolated")'>
+        <trace source="aiflux" severity="information">
+          <message>Required content safety policy rejected the request or response.</message>
+          <metadata name="category" value="ContentSafety" />
+          <metadata name="action" value="blocked" />
+        </trace>
+        <return-response>
+          <set-status code="403" reason="Content safety policy rejected content" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"Required content safety policy rejected the request or response.","type":"invalid_request_error","param":null,"code":"content_safety_rejected"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
     <return-response>
       <set-status code="503" reason="Gateway inspection or backend unavailable" />
       <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>

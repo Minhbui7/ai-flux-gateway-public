@@ -121,6 +121,20 @@ resource "azapi_resource" "gateway_openai_user" {
   response_export_values = ["id"]
 }
 
+resource "azapi_resource" "gateway_anthropic_user_sweden" {
+  type      = "Microsoft.Authorization/roleAssignments@2022-04-01"
+  name      = uuidv5("url", "${azapi_resource.sweden.id}/${var.gateway_principal_id}/CognitiveServicesUser")
+  parent_id = azapi_resource.sweden.id
+  body = {
+    properties = {
+      roleDefinitionId = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/a97b65f3-24c7-4388-baec-2e87135dc908"
+      principalId      = var.gateway_principal_id
+      principalType    = "ServicePrincipal"
+    }
+  }
+  response_export_values = ["id"]
+}
+
 output "deployments" {
   value = { for key, deployment in azapi_resource.openai : key => deployment.output }
 }

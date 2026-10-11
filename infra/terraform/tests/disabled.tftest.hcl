@@ -382,7 +382,10 @@ run "disabled_posture" {
     error_message = "The product must remain unpublished and native subscriptions required."
   }
   assert {
-    condition     = !azurerm_linux_function_app.ingestion[0].enabled && azurerm_api_management_api_policy.closed.xml_content == file("${path.module}/../../gateway/policies/disabled.xml")
+    condition = !azurerm_linux_function_app.ingestion[0].enabled && azapi_resource.closed_policy.body.properties.value == templatefile("${path.module}/../../gateway/policies/global-dev-gate.xml.tftpl", {
+      dev_api_id = azurerm_api_management_api.dev_openai.name
+      enabled    = false
+    })
     error_message = "The inference/Function release gates must remain disabled."
   }
   assert {
@@ -418,7 +421,7 @@ run "disabled_posture" {
     error_message = "The HTTPS listener, certificate hostname, and candidate public DNS label must agree."
   }
   assert {
-    condition     = !contains(keys(azapi_resource.monitor_diagnostic.body.properties), "largeLanguageModel")
+    condition     = azapi_resource.monitor_diagnostic.body.properties.largeLanguageModel.logs == "enabled" && !contains(keys(azapi_resource.monitor_diagnostic.body.properties.largeLanguageModel), "requests") && !contains(keys(azapi_resource.monitor_diagnostic.body.properties.largeLanguageModel), "responses")
     error_message = "LLM request/response logging must be omitted."
   }
 }
@@ -571,7 +574,7 @@ run "development_inference_requires_explicit_safety_configuration" {
     error_message = "Development inference must remain off until explicitly enabled with an approved content-safety threshold."
   }
   assert {
-    condition     = azurerm_api_management_api.dev_openai.subscription_required && azurerm_api_management_api_policy.dev_openai.xml_content == file("${path.module}/../../gateway/policies/disabled.xml")
+    condition     = azurerm_api_management_api.dev_openai.subscription_required && azapi_resource.dev_openai_policy.body.properties.value == file("${path.module}/../../gateway/policies/disabled.xml")
     error_message = "The staged development API must remain subscription-required and fail closed by default."
   }
   assert {

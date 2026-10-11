@@ -16,7 +16,16 @@ from aiflux.finops import aware, calculate_cost, price_for
 from aiflux.models import IngestionState, SafetyEvent, TeamSubscription, UsageRecord
 
 log = logging.getLogger(__name__)
-SAFE_CATEGORIES = {"Hate", "SelfHarm", "Sexual", "Violence", "PromptInjection", "PiiFailure", "SafetyFailure"}
+SAFE_CATEGORIES = {
+    "Hate",
+    "SelfHarm",
+    "Sexual",
+    "Violence",
+    "PromptInjection",
+    "ContentSafety",
+    "PiiFailure",
+    "SafetyFailure",
+}
 SAFE_ACTIONS = {"blocked", "stream_stopped", "dependency_failed"}
 
 
@@ -72,13 +81,25 @@ def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> in
             raise ValueError("Native usage timestamp is invalid")
         occurred = aware(occurred)
         actual_model = source.get("model") or source.get("deployment") or ""
+        identifiers = {
+            value
+            for value in (source.get("model"), source.get("deployment"))
+            if isinstance(value, str) and value
+        }
         matches = [
             model
             for model in catalog.models
-            if actual_model and (model.backend_model == actual_model or model.id == actual_model)
+            if model.backend_model in identifiers
+            or model.id in identifiers
+            or any(backend.model in identifiers for backend in model.backends if backend.model)
         ]
         model = matches[0] if len(matches) == 1 else None
         provider, region = (model.provider, model.region) if model else ("", "")
+        if model and model.backends:
+            endpoints = [backend for backend in model.backends if backend.id == source.get("backend_id")]
+            endpoint = endpoints[0] if len(endpoints) == 1 else None
+            region = endpoint.region if endpoint else ""
+            provider = (endpoint.provider or model.provider) if endpoint else ""
         alias = model.id if model else actual_model
         # A gateway region is not a backend region. Missing attribution remains visibly incomplete.
         row = db.get(UsageRecord, rid)

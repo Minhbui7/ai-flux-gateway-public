@@ -33,25 +33,21 @@ def main():
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     management_token = az(
-        "account", "get-access-token", "--resource", "https://management.azure.com/"
+        "account", "get-access-token", "--subscription", args.subscription,
+        "--resource", "https://management.azure.com/"
     )["accessToken"]
     inference_token = None
     if args.smoke:
         inference_token = az(
-            "account", "get-access-token", "--resource",
+            "account", "get-access-token", "--subscription", args.subscription, "--resource",
             "https://cognitiveservices.azure.com/"
         )["accessToken"]
     evidence = {
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "subscription_id": args.subscription,
         "backends": [],
-        "blocked": [{
-            "model": "claude-sonnet-5-5",
-            "provider": "Anthropic",
-            "catalog_latest_version": "2",
-            "regions": ["eastus", "swedencentral"],
-            "reason": "Required Anthropic industry declaration and any applicable legal/marketplace onboarding have not been authorized; no terms accepted and no deployment attempted.",
-        }],
+        "anthropic_backends": [],
+        "blocked": [],
         "gateway_ready": False,
     }
     for region, account in (
@@ -136,6 +132,53 @@ def main():
                 except (TimeoutError, urllib.error.URLError):
                     item["operator_smoke"] = {"status": "network_or_timeout_error"}
             evidence["backends"].append(item)
+        haiku_id = f"{resource_id}/deployments/claude-haiku-5-5"
+        try:
+            _, deployment = get_json(
+                f"https://management.azure.com{haiku_id}?api-version=2025-06-01",
+                management_token,
+            )
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            evidence["blocked"].append({
+                "model": "claude-haiku-5-5", "region": region,
+                "reason": "Manual Haiku deployment was not found; no deployment or terms accepted.",
+            })
+            continue
+        properties = deployment["properties"]
+        if properties["model"] != {"format": "Anthropic", "name": "claude-haiku-5-5", "version": "2"}:
+            raise ValueError("Manual Haiku deployment does not match the approved model/version")
+        endpoint = f"https://{account}.services.ai.azure.com/anthropic/v1/messages"
+        haiku = {
+            "model": "claude-haiku-5-5", "provider": "Anthropic", "region": region,
+            "version": "2", "endpoint": endpoint,
+            "ready": properties["provisioningState"] == "Succeeded",
+            "ownership": "manual_not_managed_by_this_terraform_root",
+            "gateway_routed": False,
+        }
+        if inference_token and haiku["ready"]:
+            body = {"model": "claude-haiku-5-5", "messages": [{"role": "user", "content": "Reply OK."}],
+                    "max_tokens": 16}
+            req = urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers={
+                "Authorization": "Bearer " + inference_token,
+                "Content-Type": "application/json", "anthropic-version": "2023-06-01",
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=90) as response:
+                    result = json.load(response)
+                    haiku["operator_smoke"] = {
+                        "http_status": response.status,
+                        "content_schema_present": isinstance(result.get("content"), list),
+                        "usage": {key: value for key, value in result.get("usage", {}).items()
+                                  if key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                             "cache_creation_input_tokens")},
+                    }
+            except urllib.error.HTTPError as error:
+                haiku["operator_smoke"] = {"http_status": error.code}
+            except (TimeoutError, urllib.error.URLError):
+                haiku["operator_smoke"] = {"status": "network_or_timeout_error"}
+        evidence["anthropic_backends"].append(haiku)
     destination = Path(__file__).with_name("model-backends.json")
     destination.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
@@ -145,6 +188,7 @@ def main():
             "ready": item["ready"], "smoke": item.get("operator_smoke")
         } for item in evidence["backends"]],
         "blocked": evidence["blocked"],
+        "anthropic_backends": evidence["anthropic_backends"],
     }, indent=2))
 
 

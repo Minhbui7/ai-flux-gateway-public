@@ -95,9 +95,56 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertIn('format = "rawxml"', self.apim_source)
 
     def test_prompt_and_completion_body_logging_is_not_enabled(self):
-        self.assertNotIn("GatewayLlmLogs", self.apim_source)
-        self.assertNotIn("largeLanguageModel =", self.apim_source)
+        self.assertIn('category = "GatewayLlmLogs"', self.apim_source)
+        self.assertIn('largeLanguageModel = { logs = "enabled" }', self.apim_source)
+        self.assertNotIn('messages = "all"', self.apim_source)
+        self.assertNotIn("maxSizeInBytes", self.apim_source)
         self.assertIn('category = "GatewayLogs"', self.apim_source)
+        self.assertRegex(self.apim_source, r'verbosity\s*=\s*"information"')
+        self.assertIn("percentage = 100", self.apim_source)
+
+    def test_request_validation_and_auth_failures_have_specific_errors(self):
+        validation = self.dev_policy.find(".//validate-content")
+        self.assertEqual(validation.get("id"), "aiflux-request-validation")
+        self.assertEqual(validation.find("content").get("validate-as"), "json")
+        self.assertEqual(validation.find("content").get("action"), "prevent")
+        for policy in (self.dev_policy, self.global_gate):
+            auth = policy.find("./on-error/choose/when")
+            self.assertIn("SubscriptionKeyNotFound", auth.get("condition"))
+            self.assertIn("SubscriptionKeyInvalid", auth.get("condition"))
+            self.assertEqual(auth.find("./return-response/set-status").get("code"), "401")
+        errors = self.dev_policy.findall("./on-error/choose/when")
+        self.assertIn("aiflux-request-validation", errors[1].get("condition"))
+        self.assertEqual(errors[1].find("./return-response/set-status").get("code"), "400")
+        self.assertEqual(errors[2].find("./return-response/set-status").get("code"), "429")
+
+    def test_multiple_credentials_and_query_credentials_are_rejected(self):
+        self.assertIn('subscription_required = true', self.apim_source)
+        self.assertIn('context.Request.Headers.ContainsKey("Authorization")', self.dev_source)
+        self.assertIn('code":"conflicting_credentials"', self.dev_source)
+        self.assertIn('context.Request.Url.Query.Keys.Any()', self.dev_source)
+
+    def test_rpm_and_token_counters_have_distinct_namespaces(self):
+        rpm = self.dev_policy.find(".//rate-limit-by-key").get("counter-key")
+        tpm = self.dev_policy.find(".//llm-token-limit").get("counter-key")
+        self.assertNotEqual(rpm, tpm)
+        self.assertIn('"rpm:"', rpm)
+        self.assertIn('"tpm:"', tpm)
+
+    def test_only_confirmed_native_safety_violation_is_mapped_to_403(self):
+        violations = self.dev_policy.findall("./on-error/choose/when")
+        rejection = next(
+            node for node in violations if "ContentSafetyPolicyViolated" in node.get("condition", "")
+        )
+        self.assertEqual(rejection.find("./return-response/set-status").get("code"), "403")
+        trace = rejection.find("trace")
+        self.assertEqual(trace.get("source"), "aiflux")
+        self.assertEqual(
+            {node.get("name"): node.get("value") for node in trace.findall("metadata")},
+            {"category": "ContentSafety", "action": "blocked"},
+        )
+        self.assertEqual(self.dev_policy.find("./on-error/return-response/set-status").get("code"), "503")
+        self.assertNotIn("context.LastError.Message", self.dev_source)
 
 
 if __name__ == "__main__":

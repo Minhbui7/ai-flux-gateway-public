@@ -2,7 +2,7 @@ let gateway =
     ApiManagementGatewayLogs
     | where TimeGenerated >= datetime({start}) and TimeGenerated < datetime({end})
     | where _ResourceId =~ {resource}
-    | where ProductId == {product} and OperationId == "chat-completions"
+    | where ProductId == {product} and OperationId in ("chat", "chat-completions")
     | summarize arg_max(TimeGenerated, *) by CorrelationId
     | project correlation_id=CorrelationId, subscription_id=ApimSubscriptionId,
               occurred_at=TimeGenerated, status_code=ResponseCode, e2e_ms=TotalTime,

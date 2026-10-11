@@ -1,8 +1,10 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
-from aiflux.catalog import Catalog
+from aiflux.catalog import BackendEntry, Catalog
 from aiflux.finops import calculate_cost
 from aiflux.ingestion import extract_safety, ingest_rows, nonnegative
 from aiflux.models import ModelPrice, SafetyEvent, UsageRecord
@@ -132,3 +134,96 @@ def test_safety_trace_allowlist():
         extract_safety([{"source": "aiflux", "metadata": {"category": "raw-prompt", "action": "blocked"}}])
         == []
     )
+
+
+def test_usage_query_includes_the_deployed_chat_operation():
+    query = (
+        Path(__file__).resolve().parents[2]
+        / "services"
+        / "control-plane"
+        / "src"
+        / "aiflux"
+        / "queries"
+        / "usage.kql"
+    ).read_text(encoding="utf-8")
+    assert 'OperationId in ("chat", "chat-completions")' in query
+    assert "ProductId == {product}" in query
+
+
+def test_generic_native_safety_event_does_not_invent_harm_category():
+    assert extract_safety(
+        [
+            {
+                "source": "aiflux",
+                "metadata": {"category": "ContentSafety", "action": "blocked"},
+            }
+        ]
+    ) == [("ContentSafety", "blocked")]
+
+
+def test_versioned_model_name_uses_exact_deployment_attribution(env):
+    key = create_key(env)
+    source = {
+        "subscription_id": key["id"],
+        "correlation_id": "versioned-model",
+        "resource_id": env.settings.apim_resource_id,
+        "occurred_at": datetime.now(UTC),
+        "model": "test-model-2026-07-09",
+        "deployment": "test-model",
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "status_code": 200,
+    }
+    with Session(env.db_engine) as db:
+        ingest_rows(db, [source], Catalog.load(env.settings.catalog_path))
+        db.commit()
+        row = db.scalar(select(UsageRecord))
+        assert row.model == "test-alias" and row.provider == "test" and row.region == "test-region"
+
+
+@pytest.mark.parametrize(
+    "backend_id,expected_region",
+    [
+        ("endpoint-east", "eastus"),
+        ("endpoint-sweden", "swedencentral"),
+        ("pool-id", ""),
+        (None, ""),
+    ],
+)
+def test_pooled_model_requires_exact_selected_endpoint_for_costing(env, backend_id, expected_region):
+    key = create_key(env)
+    catalog = Catalog.load(env.settings.catalog_path)
+    catalog.models[0].backends = [
+        BackendEntry(id="endpoint-east", region="eastus"),
+        BackendEntry(id="endpoint-sweden", region="swedencentral"),
+    ]
+    source = {
+        "subscription_id": key["id"],
+        "correlation_id": "pooled-model",
+        "resource_id": env.settings.apim_resource_id,
+        "occurred_at": datetime.now(UTC),
+        "model": "test-model",
+        "backend_id": backend_id,
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "status_code": 200,
+        "gateway_region": "not-the-model-region",
+    }
+    with Session(env.db_engine) as db:
+        ingest_rows(db, [source], catalog)
+        db.commit()
+        row = db.scalar(select(UsageRecord))
+        assert row.region == expected_region
+        if not expected_region:
+            assert row.provider == "" and row.completeness == "backend_attribution_missing"
+
+
+def test_catalog_rejects_duplicate_endpoint_ids(env):
+    payload = Catalog.load(env.settings.catalog_path).model_dump()
+    payload["models"][0]["backends"] = [
+        {"id": "duplicate", "region": "eastus"},
+        {"id": "duplicate", "region": "swedencentral"},
+    ]
+    env.settings.catalog_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate backend endpoint"):
+        Catalog.load(env.settings.catalog_path)

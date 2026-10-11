@@ -4,6 +4,14 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class BackendEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+    model: str = ""
+    provider: str = ""
+
+
 class ModelEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(min_length=1, max_length=100)
@@ -12,6 +20,7 @@ class ModelEntry(BaseModel):
     enabled: bool
     backend_model: str = ""
     region: str = ""
+    backends: list[BackendEntry] = Field(default_factory=list)
 
 
 class Catalog(BaseModel):
@@ -23,4 +32,7 @@ class Catalog(BaseModel):
         data = cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
         if len({model.id for model in data.models}) != len(data.models):
             raise ValueError("Catalog contains duplicate model aliases")
+        backend_ids = [backend.id for model in data.models for backend in model.backends]
+        if len(set(backend_ids)) != len(backend_ids):
+            raise ValueError("Catalog contains duplicate backend endpoint IDs")
         return data

@@ -53,6 +53,13 @@ tools and structured outputs are rejected. The main `/v1` route remains denied a
 ingestion remains disabled. Haiku 5.5 is deployed in both model regions but not routed.
 Full portal journeys, failover/quota/safety acceptance and live FinOps remain pending.
 
+Bounded dev acceptance now includes correct 401/400/415/429/403 status handling,
+Luna/Sol inference, and a synthetic Prompt Shields rejection. RPM/TPM counters are separate;
+2 RPM allowed three requests before throttling in one burst (best-effort overshoot of one).
+Explicit metadata-only LLM diagnostics now correlate both fresh model completions with
+subscription-owned gateway logs; body/message absence was checked after activation.
+This is not full PII/failover/portal/FinOps acceptance or native bearer/Anthropic support.
+
 **Current priority:** complete model routing, portal integration, unified API and
 live FinOps before fixing Application Gateway HTTPS. Its trusted certificate is
 issued, but Key Vault certificate access blocks HTTPS; renewal is not automated.

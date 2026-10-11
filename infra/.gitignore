@@ -11,4 +11,6 @@
 **/provider-schema.json
 **/live-evidence.json
 **/live-identity.json
+**/dev-acceptance.json
+**/dev-bearer-probe.json
 !**/*.tfvars.example

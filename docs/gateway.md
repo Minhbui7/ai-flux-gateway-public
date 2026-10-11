@@ -21,16 +21,36 @@ When enabled, the route accepts APIM's native `Ocp-Apim-Subscription-Key` header
 not claim `Authorization: Bearer <subscription-key>` compatibility.
 
 The development route accepts only bounded, non-streaming text chat requests. It rejects
-tools, images, structured output, streaming, unknown fields, and query parameters other than
-APIM's subscription key. Input is checked by Prompt Shields and Azure AI Content Safety at
+tools, images, structured output, streaming, unknown fields, and all query parameters,
+including query subscription keys. Combining Authorization and subscription-header
+credentials is rejected. Input is checked by Prompt Shields and Azure AI Content Safety at
 severity threshold 4, then every message is PII-redacted by Azure Language, checked again,
 and sent using APIM managed identity. Returned completions are checked by Content Safety
 before delivery. A required inspection failure blocks the request. Subscription/model limits
 are 2 requests/minute, 2,048 estimated tokens/minute, 64 output tokens/request, and 16 KiB
 request size. These are dev-only settings, not production defaults.
-The deployed path has returned one synthetic Luna completion through all three safety checks
-and PII inspection (HTTP 200, 12 prompt tokens, 4 completion tokens); no prompt or completion
-text was logged. This proves only that bounded smoke case, not the full acceptance checklist.
+Live development acceptance passed 24 bounded checks on 2026-10-11, including Luna/Sol
+completions (HTTP 200, 9 prompt and 4 completion tokens), native-key denial (401),
+schema/credential conflict rejection (400), media rejection (415), RPM throttling (429),
+and a synthetic Prompt Shields fixture (403). A configured 2 RPM limit allowed three
+requests before 429 in that burst: observed overshoot was one, not an exact rate guarantee.
+RPM and TPM use separate subscription/model counter namespaces. Required service/runtime
+failures remain 503; confirmed native safety violations return 403 and emit only a generic
+`ContentSafety` blocked-event trace, never raw error messages or inferred harm categories.
+These checks are not provider-side PII capture, full adversarial acceptance, regional
+failover proof or production release evidence.
+
+Both manually deployed Haiku 5.5 endpoints passed direct operator-Entra completions.
+Account-scoped Cognitive Services User access is configured for the gateway in both regions;
+actual Haiku gateway invocation and OpenAI-compatible native translation remain unverified.
+The model Terraform root does not own or import those manual deployments.
+
+Reproduce bounded checks with `python gateway\tools\verify_dev.py --subscription <id>
+--resource-group <rg> --apim <name> --output infra\terraform\dev-acceptance.json --smoke --limits`.
+The verifier obtains the approved test key in memory, never writes response text or secrets,
+and reports unsupported/unverified functionality separately. `--limits` makes at most
+eight burst requests and waits for counter recovery; it is paid synthetic traffic.
+`--probe-bearer` currently fails explicitly rather than treating unsupported auth as a pass.
 
 The `/v1` placeholder remains unconditionally denied. Editing the production Product,
 catalog or manifest cannot activate it. Any future production activation needs a separately reviewed
@@ -61,6 +81,11 @@ Configuring `Authorization` as the key-header name does not remove the `Bearer `
 Manually comparing secrets, disabling `subscription_required`, or trusting arbitrary
 organization/model headers is not acceptable. Bearer/header conflict handling,
 revocation, product scope and native validation must be proved on the target rollout.
+
+A canonical sample's preview `subscriptionKeyParameterNames.bearer = "enabled"` setting
+was tried on this instance. ARM accepted the update but omitted it on readback, and
+bearer-only access returned 401. The ineffective configuration was removed; native header
+authentication remains required. Portal creation still requires interactive Entra sign-in.
 
 ## Catalog integration
 
@@ -128,8 +153,12 @@ overwrite them from trusted alias/actual-endpoint configuration and discard call
 The disabled policy emits none. `BackendId` must identify the selected **endpoint**, not
 merely the pool. If native selection exposes only a pool, actual region/provider costing
 remains incomplete. Do not use `LlmLog.Region` (ambiguous resource geography) or gateway
-region as a model-backend region. Selection metadata is **unverified**, not currently
-promised or synthesized.
+region as a model-backend region. Successful guarded calls now expose the exact selected
+Sweden backend IDs and matching Foundry host in gateway metadata. This proves those
+observations, not failover or both-region selection coverage. Ingestion resolves an exact
+`backends[].id` against the reviewed catalog, never the pool or caller metadata. Pooled
+models with missing/unknown endpoint IDs remain visibly incomplete even if a default model
+region exists; duplicate endpoint IDs are rejected.
 
 Native documented logs contain PromptTokens, CompletionTokens, TotalTokens, ModelName,
 DeploymentName, IsStreamCompletion and correlation IDs. Cached-read/write counts and true
@@ -139,8 +168,20 @@ may be partial/missing. Show known estimated cost and coverage independently; ne
 invoice-grade billing or zero-cost unknowns. See `docs\capabilities.md`.
 
 APIM HTTP body collection is zero bytes, request/backend headers are empty, and LLM
-message settings are omitted. Native LLM metadata logging uses the documented preview
-diagnostic schema; omission needs a live absence-of-payload check. WAF/access diagnostic
+message settings are omitted. LLM metadata logging is explicitly enabled using the
+documented preview diagnostic schema and `GatewayLlmLogs` category; prompts/completions
+are not enabled. Information verbosity and 100% sampling collect successful gateway
+metadata as well as failures. The ingestion operation filter accepts the deployed `chat`
+operation and the final contract's `chat-completions` operation. Model attribution considers
+both exact deployment and model identifiers, since native model names can include a version.
+
+Before explicit LLM diagnostic activation, successful gateway and LLM correlation IDs did
+not join. After activation on 2026-10-11, both fresh Luna/Sol completions joined by exact
+correlation ID, each with 9 input and 4 output tokens. The same bounded post-change window
+had 21 gateway rows with zero captured bodies and 19 LLM rows with zero captured messages.
+Live SQL ownership, reviewed catalog/pricing and scheduled ingestion remain unverified;
+the Function stays disabled. Do not time-join unrelated requests or fabricate usage/region.
+WAF/access diagnostic
 sinks are deliberately not enabled because matched values/URLs can contain prompts or
 credentials. Do not enable allLogs, raw trace/debug, or application request/response logging.
 
