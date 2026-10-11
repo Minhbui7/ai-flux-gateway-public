@@ -95,6 +95,8 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         deleted = {header.get("name") for header in self.dev_policy.findall(".//set-header[@exists-action='delete']")}
         self.assertTrue({"Authorization", "api-key", "Ocp-Apim-Subscription-Key"} <= deleted)
         self.assertIn("https://cognitiveservices.azure.com/", self.dev_source)
+        self.assertNotIn('set-header name="x-aiflux-original-body" exists-action="override"', self.dev_source)
+        self.assertIn("context.Request.Body.As&lt;string&gt;(preserveContent: true)", self.dev_source)
 
     def test_pii_batches_follow_synchronous_document_limit_and_preserve_global_ids(self):
         self.assertIn("%{ for batch in range(5)", self.dev_source)
@@ -143,6 +145,11 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertIn("aiflux-request-validation", errors[1].get("condition"))
         self.assertEqual(errors[1].find("./return-response/set-status").get("code"), "400")
         self.assertEqual(errors[2].find("./return-response/set-status").get("code"), "429")
+        self.assertIn("TokenLimitExceededAfterPrompt", errors[2].get("condition"))
+        self.assertEqual(
+            self.dev_policy.find(".//llm-token-limit").get("retry-after-variable-name"),
+            "aiflux-token-retry-after",
+        )
 
     def test_multiple_credentials_and_query_credentials_are_rejected(self):
         self.assertIn('subscription_required = true', self.apim_source)

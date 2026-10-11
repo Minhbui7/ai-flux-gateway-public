@@ -55,6 +55,15 @@ system/developer/user/assistant roles with synthetic contact data, supplementary
 and combining marks. These are successful inspection/forwarding checks, **not** independent
 provider-side capture or evidence that every PII category/language is handled.
 
+The latest raw UTF-8 acceptance passes 28 checks. Unlike JSON-escaped Unicode, raw
+supplementary characters exposed an invalid-header failure in the original-body scratch
+header. That header is removed: the original JSON is retained directly in a request-local
+string variable, preventing Unicode/header-size restrictions and accidental forwarding.
+An independent 6,100-byte high-token fixture exposed native
+`TokenLimitExceededAfterPrompt` being incorrectly reported as 503. The observed native
+reason now maps to an OpenAI-shaped 429 with Retry-After, separately from RPM throttling.
+Other token-policy runtime failures still fail closed rather than being assumed rate limits.
+
 A six-message test exposed a genuine Sol East US backend 500. The dev route now retries
 only buffered 500/502/503/504 model responses once, reselecting the same-model regional pool,
 with a one-second delay and 45-second timeout per attempt. Exhausted 5xx returns an
@@ -216,6 +225,15 @@ control access returns 401. A subsequent full refresh still proposes app logging
 Function content-share, policy serialization and SQL vulnerability-assessment changes;
 this is not a no-drift deployment. Do not blanket-apply those changes or disable an
 existing SQL vulnerability assessment.
+
+The current control-plane source was built as immutable ACR image
+`sha256:d689dbae4a590ef78060dbda5b6e0fbc595e3750a2fc3d045e074bbfcd87b412`.
+ACR build `cag` and runtime smoke `cah` succeeded, including native safety metadata and
+endpoint-catalog imports. The API now runs that image; after restart health/readiness
+returned 200 and anonymous `/api/me` returned 401. A targeted Terraform image plan tried
+to disable the existing SQL express vulnerability assessment as a dependency; it was
+not applied. Only the App Service image was updated, retaining registry managed identity,
+network restrictions, SQL assessment and closed catalog/ingestion flags.
 
 ## Validation and reviewed artifact handoff
 

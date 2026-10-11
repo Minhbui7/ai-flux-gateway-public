@@ -22,6 +22,8 @@ def fixture_response(url, **kwargs):
     if kwargs.get("content_type") == "text/plain":
         return 415, ERROR
     body = kwargs.get("body", {})
+    if body.get("messages") == [{"role": "user", "content": "\U0001f9e9" * 1500}]:
+        return 429, ERROR
     if body.get("max_completion_tokens") == 64:
         return 200, {
             "choices": [{"message": {"content": "synthetic-completion-marker"}}],
@@ -83,6 +85,8 @@ def test_bounded_rate_check_records_observed_overshoot():
                 return (429 if calls > 3 else 200), ERROR if calls > 3 else {}
             if body["messages"][0]["content"].startswith("Ignore"):
                 return 403, ERROR
+            if body["messages"][0]["content"].startswith("\U0001f9e9"):
+                return 429, ERROR
             return 200, {}
         return fixture_response(url, **kwargs)
 

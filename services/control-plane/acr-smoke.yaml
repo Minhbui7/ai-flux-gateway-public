@@ -1,7 +1,7 @@
 version: v1.1.0
 steps:
   - cmd: >-
-      {{.Run.Registry}}/aiflux/api@sha256:2f969a2b6a9b34db8fc8adc4e90ed438b30feb3e513be21e6bb5cc61779dba31
+      {{.Run.Registry}}/aiflux/api@sha256:d689dbae4a590ef78060dbda5b6e0fbc595e3750a2fc3d045e074bbfcd87b412
       python -c 'import subprocess,time,httpx,pyodbc,aiflux.tls;
       p=subprocess.Popen(["uvicorn","aiflux.app:app","--host","127.0.0.1","--port","8000","--no-access-log"]);
       time.sleep(5);
@@ -13,5 +13,9 @@ steps:
       assert r.status_code==503,r.status_code;
       assert c.status_code==404,c.status_code;
       assert "ODBC Driver 18 for SQL Server" in pyodbc.drivers();
-      print("Verified immutable API image: TLS issuer imports, HTTP health 200, unconfigured readiness 503, challenge off, ODBC 18 installed")'
+      from aiflux.ingestion import extract_safety;
+      from aiflux.catalog import BackendEntry;
+      assert extract_safety([{"source":"aiflux","metadata":"{\"category\":\"ContentSafety\",\"action\":\"blocked\"}"}])==[("ContentSafety","blocked")];
+      assert BackendEntry(id="synthetic-endpoint",region="swedencentral").region=="swedencentral";
+      print("Verified immutable API image: health 200, unconfigured readiness 503, challenge off, ODBC 18, native safety metadata and endpoint catalog support")'
     timeout: 60

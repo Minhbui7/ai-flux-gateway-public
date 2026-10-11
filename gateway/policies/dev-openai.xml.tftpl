@@ -57,10 +57,7 @@
         <validate-content id="aiflux-request-validation" unspecified-content-type-action="prevent" max-size="16384" size-exceeded-action="prevent">
           <content type="application/json" validate-as="json" action="prevent" />
         </validate-content>
-        <set-header name="x-aiflux-original-body" exists-action="override">
-          <value><![CDATA[@(context.Request.Body.As<string>(preserveContent: true))]]></value>
-        </set-header>
-        <set-variable name="aiflux-request-json" value='@(context.Request.Headers.GetValueOrDefault("x-aiflux-original-body", ""))' />
+        <set-variable name="aiflux-request-json" value='@(context.Request.Body.As&lt;string&gt;(preserveContent: true))' />
         <choose>
           <when condition='@{
             var body = JObject.Parse((string)context.Variables["aiflux-request-json"]);
@@ -95,7 +92,7 @@
         </choose>
         <set-variable name="aiflux-model" value='@((string)JObject.Parse((string)context.Variables["aiflux-request-json"])["model"])' />
         <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@("rpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
-        <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" />
+        <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" retry-after-variable-name="aiflux-token-retry-after" />
         <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
           <categories output-type="EightSeverityLevels">
             <category name="Hate" threshold="${safety_threshold}" />
@@ -288,12 +285,12 @@
           <set-body>{"error":{"message":"The request must match the bounded development JSON schema.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
         </return-response>
       </when>
-      <when condition='@(context.LastError.Reason == "RateLimitExceeded")'>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt")'>
         <return-response>
           <set-status code="429" reason="Too Many Requests" />
           <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
           <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
-          <set-header name="Retry-After" exists-action="override"><value>@(context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>@(context.Variables.ContainsKey("aiflux-token-retry-after") &amp;&amp; context.Variables["aiflux-token-retry-after"] is int ? ((int)context.Variables["aiflux-token-retry-after"]).ToString() : context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
           <set-body>{"error":{"message":"The subscription model limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
         </return-response>
       </when>
