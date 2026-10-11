@@ -63,6 +63,11 @@ An independent 6,100-byte high-token fixture exposed native
 `TokenLimitExceededAfterPrompt` being incorrectly reported as 503. The observed native
 reason now maps to an OpenAI-shaped 429 with Retry-After, separately from RPM throttling.
 Other token-policy runtime failures still fail closed rather than being assumed rate limits.
+An independent native TPM probe also verified a positive `Retry-After: 60` response.
+The approved disposable test subscription was temporarily suspended: its existing header
+key returned 401, then the original active state was restored and `/models` returned 200.
+Only that subscription's state changed; no key was exposed, revoked permanently or rotated.
+This proves suspension enforcement, not bearer authentication or cross-subscription isolation.
 
 A six-message test exposed a genuine Sol East US backend 500. The dev route now retries
 only buffered 500/502/503/504 model responses once, reselecting the same-model regional pool,
