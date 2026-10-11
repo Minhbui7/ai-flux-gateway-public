@@ -43,12 +43,16 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.16.5"
+      - run: terraform -chdir=infra/operator fmt -check -recursive
+      - run: terraform -chdir=infra/operator init -backend=false -input=false
+      - run: terraform -chdir=infra/operator validate
+      - run: terraform -chdir=infra/operator test
       - run: terraform -chdir=infra/terraform fmt -check -recursive
       - run: terraform -chdir=infra/terraform init -backend=false -input=false
       - run: terraform -chdir=infra/terraform validate
       - run: terraform -chdir=infra/terraform test
       - run: terraform -chdir=infra/state fmt -check -recursive
-      - run: terraform -chdir=infra/state init -input=false
+      - run: terraform -chdir=infra/state init -backend=false -input=false
       - run: terraform -chdir=infra/state validate
       - run: terraform -chdir=infra/state test
       - run: python gateway/tools/validate_bundle.py

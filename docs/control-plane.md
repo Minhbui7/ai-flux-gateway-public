@@ -25,8 +25,16 @@ refuses to override a disabled organization or conflicting membership.
 Production requires an `mssql+pyodbc` database URL, ODBC Driver 18, encryption and
 an identity authorized as a contained Azure SQL user. The application obtains an
 Azure SQL access token on each connection. Do not put database passwords in the
-URL. Run migrations explicitly from a runner inside the private network; never
-run schema creation on web-server startup.
+URL. In the deployed hybrid development environment, SQL public access is disabled:
+migrations and contained-user grants require an approved private execution path
+using the Entra-authenticated operator, not the runtime managed identity.
+The App Service/SCM operator `/32` is not a SQL access rule. SCM DNS/TCP success
+does not establish operator SQL authentication, and operator SQL tokens must not
+be embedded in SCM command payloads. After operator migrations/grants, run
+`aiflux-bootstrap` with the reviewed identity settings and verify the home-tenant
+administrator membership and runtime `/ready` 200. Only separately approved legacy
+public-data deployments use reviewed operator/App Service SQL firewall rules.
+Never run schema creation on web-server startup.
 
 The container build context is the repository root:
 
@@ -40,9 +48,10 @@ and SQL connectivity. Neither proves gateway/model readiness.
 ## Identity and authorization
 
 React obtains a delegated access token for the control-plane audience and
-`access_as_user` scope. Register an organizational multitenant application with
-that scope; customer administrators grant tenant consent. Personal Microsoft
-accounts are not supported.
+`access_as_user` scope. The DEV API/customer/admin registrations use
+`AzureADMyOrg` and a tenant-GUID authority; multi-tenant registration requirements
+are deferred to the customer production environment. Personal Microsoft accounts
+are not supported.
 
 The API checks the JWT signature, tenant-specific issuer, audience, expiry,
 not-before, scope, approved tenant, and approved `(tid, oid)` membership on every
@@ -88,7 +97,7 @@ changes write metadata-only audit records.
 
 The ingestion Function imports `aiflux.ingestion`, the same package as the API.
 CI assembles its wheel into `services\usage-ingestion\wheels` for deployment.
-Run `aiflux-ingest` from an authenticated private-network environment to execute
+Run `aiflux-ingest` from an authenticated, explicitly SQL-allowlisted environment to execute
 one bounded ingestion batch. Timer executions replay an overlap window and
 advance the durable watermark only after the database transaction succeeds.
 

@@ -2,7 +2,7 @@ param([string]$Terraform = "$PSScriptRoot\..\.tools\terraform.exe")
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
 $tf = (Resolve-Path $Terraform).Path
-foreach ($directory in @("infra\terraform", "infra\state")) {
+foreach ($directory in @("infra\operator", "infra\terraform", "infra\state")) {
     & $tf "-chdir=$root\$directory" fmt -check -recursive
     if ($LASTEXITCODE -ne 0) { throw "Terraform formatting failed: $directory" }
     & $tf "-chdir=$root\$directory" validate -no-color

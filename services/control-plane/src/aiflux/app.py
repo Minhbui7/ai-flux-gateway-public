@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -6,6 +7,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -107,6 +109,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict:
         return {"status": "alive"}
+
+    @app.get("/.well-known/acme-challenge/{token}", response_class=PlainTextResponse)
+    def acme_challenge(token: str) -> PlainTextResponse:
+        if not settings.acme_challenge_enabled or not re.fullmatch(r"[A-Za-z0-9_-]{20,128}", token):
+            raise HTTPException(404, "Not found")
+        path = settings.acme_challenge_directory / token
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 300:
+            raise HTTPException(404, "Not found")
+        value = path.read_text(encoding="ascii")
+        if not re.fullmatch(re.escape(token) + r"\.[A-Za-z0-9_-]{43}", value):
+            raise HTTPException(404, "Not found")
+        return PlainTextResponse(value)
+
+    @app.api_route(
+        "/_edge-denied/{path:path}",
+        methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    )
+    def edge_denied(path: str) -> PlainTextResponse:
+        return PlainTextResponse("Public application routes are not released", status_code=403)
 
     @app.get("/ready")
     def ready() -> dict:

@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate*
+*.tfplan
+*.tfvars
+model-backends.json
+preflight.json
+apply-result.json
+!*.tfvars.example
+__pycache__/

@@ -1,0 +1,21 @@
+subscription_id     = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+resource_group_name = "rg-aiflux-fdpo-dev"
+location            = "eastus"
+name_prefix         = "aiflux-fdpo-dev"
+address_space       = "10.240.0.0/16"
+
+# Candidate only: B2s (2 vCPU / 4 GiB), E4 32 GiB Standard SSD, Ubuntu 24.04 LTS.
+# Burstable CPU, disk capacity and Trusted Launch/SKU regional support need acceptance.
+vm_size = "Standard_B2s"
+os_disk = {
+  size_gb      = 32
+  storage_type = "StandardSSD_LRS"
+}
+admin_ssh_public_key = "" # Existing public key only; SSH disabled/no inbound path.
+
+# No deployment authorization in this example. Subscription VNet list was empty,
+# but corporate peering/VPN overlap has NOT been established.
+deployment_approved             = false
+network_overlap_review_approved = false
+egress_approved                  = false
+deployment_identity_approved     = false

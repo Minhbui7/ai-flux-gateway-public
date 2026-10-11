@@ -1,0 +1,17 @@
+version: v1.1.0
+steps:
+  - cmd: >-
+      {{.Run.Registry}}/aiflux/api@sha256:2f969a2b6a9b34db8fc8adc4e90ed438b30feb3e513be21e6bb5cc61779dba31
+      python -c 'import subprocess,time,httpx,pyodbc,aiflux.tls;
+      p=subprocess.Popen(["uvicorn","aiflux.app:app","--host","127.0.0.1","--port","8000","--no-access-log"]);
+      time.sleep(5);
+      h=httpx.get("http://127.0.0.1:8000/health");
+      r=httpx.get("http://127.0.0.1:8000/ready");
+      c=httpx.get("http://127.0.0.1:8000/.well-known/acme-challenge/not-a-real-token");
+      p.terminate(); p.wait(timeout=10);
+      assert h.status_code==200,h.status_code;
+      assert r.status_code==503,r.status_code;
+      assert c.status_code==404,c.status_code;
+      assert "ODBC Driver 18 for SQL Server" in pyodbc.drivers();
+      print("Verified immutable API image: TLS issuer imports, HTTP health 200, unconfigured readiness 503, challenge off, ODBC 18 installed")'
+    timeout: 60

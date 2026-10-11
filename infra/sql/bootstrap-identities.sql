@@ -1,11 +1,12 @@
 -- Run as the configured Entra SQL administrator AFTER application migrations.
--- SQLCMD variables contain managed identity principal OBJECT IDs, never client IDs.
+-- SQLCMD SID variables contain managed identity CLIENT IDs, not principal object IDs.
+-- SQL ARM administrator assignments use principal object IDs instead.
 -- SID-based external users avoid granting the SQL server Graph directory access.
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 
-DECLARE @api_sid varbinary(16) = CONVERT(varbinary(16), CONVERT(uniqueidentifier, '$(API_PRINCIPAL_ID)'));
-DECLARE @ingestion_sid varbinary(16) = CONVERT(varbinary(16), CONVERT(uniqueidentifier, '$(INGESTION_PRINCIPAL_ID)'));
+DECLARE @api_sid varbinary(16) = CONVERT(varbinary(16), CONVERT(uniqueidentifier, '$(API_CLIENT_ID)'));
+DECLARE @ingestion_sid varbinary(16) = CONVERT(varbinary(16), CONVERT(uniqueidentifier, '$(INGESTION_CLIENT_ID)'));
 DECLARE @sql nvarchar(max);
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'aiflux-api')
 BEGIN

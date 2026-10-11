@@ -10,7 +10,7 @@ terraform {
       version = "= 2.13.0"
     }
   }
-  backend "azurerm" {}
+  backend "local" {}
 }
 
 provider "azurerm" {

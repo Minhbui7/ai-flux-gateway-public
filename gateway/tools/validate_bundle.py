@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES = frozenset({
-    "native_iac", "subscription_bearer", "private_edge",
+    "native_iac", "subscription_bearer", "public_edge_origin",
     "pii_structure_unicode", "pii_fail_closed", "original_redacted_safety",
     "prompt_shields", "response_safety", "sse_sliding_window",
     "tools_inspection", "json_schema_inspection", "model_region_access",

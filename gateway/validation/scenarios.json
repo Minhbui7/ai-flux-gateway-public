@@ -15,12 +15,15 @@
       "Product-scoped and all-access subscriptions cannot bypass API/global policy",
       "Backend capture proves no customer key forwarded"
     ],
-    "private_edge": [
-      "Front Door Premium Private Link connection approved to AppGW private frontend",
-      "TLS certificate names, chain, private DNS, health probes and management access validated",
-      "Internet direct AppGW/APIM/application/SQL/AI/storage access denied",
-      "Untrusted peered/VNet direct AppGW/APIM access denied by NSGs",
-      "Edge cache disabled and buffering/timeouts/cancellation validated"
+    "public_edge_origin": [
+      "Public WAF_v2 HTTPS AppGW, DNS, matching Key Vault certificate and renewal path validated",
+      "HTTPS backend SNI, 200 health probes, WAF request inspection and timeout/cancellation validated",
+      "App Service and SCM deny untrusted public origins while allowing AppGW Microsoft.Web service endpoint and explicit reviewed operator /32",
+      "Entra-only SQL allows only reviewed operator and actual App Service outbound IPv4 rules, never 0.0.0.0 AllowAzureServices",
+      "Public AI/Key Vault/storage require identity/RBAC; no shared keys or anonymous data access",
+      "Before inference release, native APIM origin control live-proves direct public bypass denial while allowing AppGW; deny-all remains until then",
+      "Basic v2 outbound IP is not assumed deterministic; authenticated model endpoints verified",
+      "Edge cache disabled, request buffering on, SSE response buffering off and WAF no-sensitive-log behavior validated"
     ],
     "pii_structure_unicode": [
       "All accepted user-bearing roles/history including system/developer/assistant text inspected",
@@ -68,7 +71,7 @@
     ],
     "model_region_access": [
       "Each configured deployment/provider/version and commercial eligibility confirmed",
-      "Private connectivity and endpoint authentication verified for every pool member",
+      "Public TLS connectivity and endpoint authentication verified for every pool member without hardcoded Basic v2 outbound IPs",
       "Only proved capability/model combinations advertised; unavailable formats explicitly reject"
     ],
     "pool_retry_after": [

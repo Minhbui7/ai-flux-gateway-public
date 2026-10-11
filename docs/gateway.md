@@ -1,8 +1,8 @@
-# APIM gateway: disabled until native validation
+# APIM gateway: production disabled, guarded development route deployed
 
 ## Implemented surface
 
-Terraform creates the private Premium v2 candidate, an **unpublished** subscription-required
+Terraform creates the public Basic v2 development candidate, an **unpublished** subscription-required
 Product `aiflux`, and a **disabled ordinary HTTP placeholder**, not a native unified model API.
 The only operations are `GET /v1/models` and `POST /v1/chat/completions`.
 Both global and API policy unconditionally return an OpenAI-shaped `503` with `no-store`.
@@ -10,11 +10,30 @@ Native subscription validation may reject earlier with `401`. The placeholder ha
 translation, successful model list, inference forwarding, retry, or adapter**.
 Do not present its existence as native capability proof.
 
-`gateway\openapi.json` describes this disabled surface, not a successful OpenAI API.
-`gateway\capabilities.json` records sixteen unverified release gates. There is intentionally
-no Terraform variable, attestation flag, or JSON toggle that enables inference.
-Editing only the Product publication, catalog or manifest cannot legitimately activate it:
-the unconditional global/API denial remains. Activation needs a separately reviewed
+`gateway\openapi.json` describes this disabled `/v1` surface, not a successful OpenAI API.
+`gateway\capabilities.json` records production release gates. A separate, subscription-required
+text-only development API is deployed at `/dev/v1` for the verified `gpt-5.6-luna` and
+`gpt-5.6-sol` deployments in East US and Sweden Central. Its product is published for
+subscription management, requires approval, and permits one subscription.
+This pass-through route is not the native unified-model API and does not claim that the
+production `/v1` contract is implemented.
+When enabled, the route accepts APIM's native `Ocp-Apim-Subscription-Key` header; it does
+not claim `Authorization: Bearer <subscription-key>` compatibility.
+
+The development route accepts only bounded, non-streaming text chat requests. It rejects
+tools, images, structured output, streaming, unknown fields, and query parameters other than
+APIM's subscription key. Input is checked by Prompt Shields and Azure AI Content Safety at
+severity threshold 4, then every message is PII-redacted by Azure Language, checked again,
+and sent using APIM managed identity. Returned completions are checked by Content Safety
+before delivery. A required inspection failure blocks the request. Subscription/model limits
+are 2 requests/minute, 2,048 estimated tokens/minute, 64 output tokens/request, and 16 KiB
+request size. These are dev-only settings, not production defaults.
+The deployed path has returned one synthetic Luna completion through all three safety checks
+and PII inspection (HTTP 200, 12 prompt tokens, 4 completion tokens); no prompt or completion
+text was logged. This proves only that bounded smoke case, not the full acceptance checklist.
+
+The `/v1` placeholder remains unconditionally denied. Editing the production Product,
+catalog or manifest cannot activate it. Any future production activation needs a separately reviewed
 implementation using the verified native contract, not an escape hatch around policy.
 
 ## Why native provisioning is blocked
@@ -26,9 +45,12 @@ and [2025-09-01-preview contract](https://learn.microsoft.com/azure/templates/mi
 do not define a unified-model alias/translation configuration. No `type = llm`,
 made-up model properties, or invented translation policy has been used here.
 
-The canonical Terraform sample contains backend `credentials.managedIdentity` with
-`schema_validation_enabled = false`, while the published backend ARM schema does not
-describe that property. It is **not adopted as an independently verified contract**.
+The [Azure-Samples/AI-Gateway Content Safety sample](https://github.com/Azure-Samples/AI-Gateway/blob/main/labs/content-safety/main.bicep)
+uses backend `credentials.managedIdentity` with `Microsoft.ApiManagement/service/backends@2024-06-01-preview`.
+The deployed Content Safety backend follows that contract, explicitly selecting the gateway
+user-assigned identity and Cognitive Services audience. The AzAPI provider's older embedded
+schema doesn't describe the preview property, so validation is disabled only for that backend
+resource; the resulting ARM configuration and live guarded completion were verified.
 Likewise, backend pools are documented, but their integration with native aliases,
 actual selected-endpoint logging, and per-endpoint authentication still needs proof.
 No unauthenticated model backend is provisioned as a substitute.

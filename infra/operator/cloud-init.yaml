@@ -1,0 +1,39 @@
+#cloud-config
+ssh_pwauth: false
+disable_root: true
+bootcmd:
+  - [systemctl, mask, --now, ssh.service, ssh.socket]
+apt:
+  primary:
+    - arches: [default]
+      uri: https://azure.archive.ubuntu.com/ubuntu
+  security:
+    - arches: [default]
+      uri: https://security.ubuntu.com/ubuntu
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - unzip
+  - python3
+  - python3-venv
+  - docker.io
+  - libicu74
+groups:
+  - docker
+users:
+  - default
+  - name: runner
+    lock_passwd: true
+    shell: /bin/bash
+    groups: [docker]
+write_files:
+  - path: /etc/aiflux-runner-bootstrap
+    permissions: '0644'
+    content: |
+      machine-only; GitHub runner, Azure CLI and Terraform installation/registration require separate operator acceptance.
+runcmd:
+  - [bash, -c, 'set -euo pipefail; systemctl enable --now docker; install -d -o runner -g runner -m 0700 /opt/actions-runner; touch /var/lib/cloud/instance/aiflux-machine-bootstrap-complete']

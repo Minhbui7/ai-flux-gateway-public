@@ -8,7 +8,7 @@
   "gates": {
     "native_iac": "unverified",
     "subscription_bearer": "unverified",
-    "private_edge": "unverified",
+    "public_edge_origin": "unverified",
     "pii_structure_unicode": "unverified",
     "pii_fail_closed": "unverified",
     "original_redacted_safety": "unverified",

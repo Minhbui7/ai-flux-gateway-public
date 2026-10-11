@@ -12,7 +12,7 @@ Tools and structured outputs cannot be advertised without inspection coverage.
 | Component | Implementation |
 | --- | --- |
 | Public inference | APIM-only OpenAI-compatible `/v1/models` and `/v1/chat/completions` |
-| Edge | Front Door Premium -> private Application Gateway -> private APIM/origins |
+| Edge | Staged public Application Gateway WAF_v2 HTTPS -> public Basic v2 APIM/authenticated origins (no development Front Door) |
 | Customer portal | React/TypeScript, Entra login, team keys, catalog, playground, showback |
 | IDS portal | React/TypeScript, onboarding, organization/subscription showback, safety events |
 | Control plane | Python FastAPI, APIM ARM operations, approved tenant/user authorization |
@@ -37,10 +37,28 @@ This is the group's metadata location, not proof of model/SKU availability.
 All scripts must select this subscription explicitly; do not change shared CLI
 defaults. Existing resource groups and workloads must not be modified.
 
-The resource group is the only provisioned resource verified by this work.
-Terraform/application deployment requires the reviewed environment configuration,
-Entra tenant/app/user identifiers, DNS/TLS/network settings, approved model
-endpoints/capacity, prices, limits, and safety/retention settings.
+Development uses Basic v2 APIM, public P1v3 apps/Foundry endpoints and private SQL S0
+in Australia East. SQL, Key Vault and Function storage have private endpoints;
+API/ingestion use outbound VNet integration. Single-tenant Entra registrations,
+application images and SQL migration/bootstrap are deployed.
+Deploy locally with Azure CLI/Entra authentication and encrypted, access-controlled
+ignored local Terraform state. No VM/private runner/operator or blob-state bootstrap
+is required. Private operator/state designs are deferred. Examples remain unapproved
+and provision nothing.
+
+Guarded Luna/Sol text completions have succeeded through
+`https://aiflux-fdpo-dev-apim.azure-api.net/dev/v1` with an approved APIM subscription
+key. This separate limited dev product is not the final native unified API: streaming,
+tools and structured outputs are rejected. The main `/v1` route remains denied and
+ingestion remains disabled. Haiku 5.5 is deployed in both model regions but not routed.
+Full portal journeys, failover/quota/safety acceptance and live FinOps remain pending.
+
+**Current priority:** complete model routing, portal integration, unified API and
+live FinOps before fixing Application Gateway HTTPS. Its trusted certificate is
+issued, but Key Vault certificate access blocks HTTPS; renewal is not automated.
+Direct APIM managed HTTPS remains the dev inference path. Deferring the edge fix
+does not waive final TLS/origin-protection acceptance.
+See the [dev runbook](docs/infrastructure.md).
 
 ## Development
 
@@ -64,9 +82,11 @@ npm run build
 ```
 
 CI validates Python, frontend builds and Terraform without provisioning Azure.
-The manual control-plane deployment workflow requires a protected GitHub
-environment, workload federation and reviewed infrastructure. Private origins
-require private-network runners for migrations and health verification.
+The old private-runner deployment workflow is disabled; use the reviewed local
+operator route today. The approved hybrid root keeps SQL, vault and Function
+storage public-disabled with private endpoints; API/ingestion integrate outbound.
+Private SQL migrations/vault uploads require an approved VNet-connected execution
+route, not a public firewall exception. See the infrastructure runbook.
 
 ## Native limitations
 

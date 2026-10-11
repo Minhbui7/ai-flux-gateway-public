@@ -1,5 +1,15 @@
 .git
+infra
+.deployment
+.github
+**/*.tfplan
+**/*.tfvars
+**/backend.hcl
 .venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+**/*.pyc
 node_modules
 **/node_modules
 **/dist

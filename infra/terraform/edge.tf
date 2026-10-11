@@ -1,4 +1,22 @@
+resource "azurerm_public_ip" "appgw" {
+  for_each            = local.edge_stage ? { public = true } : {}
+  name                = "${local.prefix}-appgw-pip"
+  location            = var.location
+  resource_group_name = local.rg
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  zones               = var.edge.zones
+  domain_name_label   = var.edge.dns_label
+  tags                = local.tags
+  lifecycle {
+    # Azure stamps immutable FirstPartyUsage ip_tags; removing them replaces the IP.
+    ignore_changes = [ip_tags]
+  }
+  depends_on = [terraform_data.approval]
+}
+
 resource "azurerm_web_application_firewall_policy" "appgw" {
+  for_each            = local.edge_stage ? { public = true } : {}
   name                = "${local.prefix}-appgw-waf"
   location            = var.location
   resource_group_name = local.rg
@@ -11,6 +29,65 @@ resource "azurerm_web_application_firewall_policy" "appgw" {
     request_body_inspect_limit_in_kb = var.edge.waf_inspection_limit_kb
     file_upload_enforcement          = true
     request_body_enforcement         = true
+    log_scrubbing {
+      enabled = true
+      dynamic "rule" {
+        for_each = toset(["RequestHeaderNames", "RequestCookieNames", "RequestArgNames", "RequestPostArgNames", "RequestJSONArgNames"])
+        content {
+          enabled                 = true
+          match_variable          = rule.value
+          selector_match_operator = "EqualsAny"
+        }
+      }
+      rule {
+        enabled                 = true
+        match_variable          = "RequestIPAddress"
+        selector_match_operator = "EqualsAny"
+      }
+    }
+  }
+  # Inference never reaches an origin, even during operator acceptance.
+  custom_rules {
+    name      = "InferenceDisabled"
+    priority  = 1
+    rule_type = "MatchRule"
+    action    = "Block"
+    match_conditions {
+      match_variables {
+        variable_name = "RequestUri"
+      }
+      operator     = "Regex"
+      match_values = ["^/v1(/|[?]|$)"]
+      transforms   = ["UrlDecode", "Lowercase"]
+    }
+  }
+  dynamic "custom_rules" {
+    for_each = local.public_edge_stage ? [] : [1]
+    content {
+      name      = "ChallengeOnlyUntilAccepted"
+      priority  = 2
+      rule_type = "MatchRule"
+      action    = "Block"
+      match_conditions {
+        match_variables {
+          variable_name = "RequestUri"
+        }
+        operator           = "Regex"
+        match_values       = ["^/\\.well-known/acme-challenge/[A-Za-z0-9_-]{20,128}$"]
+        negation_condition = true
+      }
+      dynamic "match_conditions" {
+        for_each = local.edge_tls_stage ? [1] : []
+        content {
+          match_variables {
+            variable_name = "RemoteAddr"
+          }
+          operator           = "IPMatch"
+          match_values       = ["${var.operator_ip}/32"]
+          negation_condition = true
+        }
+      }
+    }
   }
   managed_rules {
     managed_rule_set {
@@ -18,22 +95,28 @@ resource "azurerm_web_application_firewall_policy" "appgw" {
       version = "3.2"
     }
   }
+  depends_on = [terraform_data.approval]
 }
 
 locals {
-  appgw_backends = merge({
-    apim = { fqdn = "${local.apim_name}.azure-api.net", health = "/status-0123456789abcdef" }
-    }, { for k, app in azurerm_linux_web_app.main : k => {
+  appgw_backends = local.edge_stage ? merge(
+    {
+      deny = { fqdn = azurerm_linux_web_app.main["api"].default_hostname, health = "/health" }
+      api  = { fqdn = azurerm_linux_web_app.main["api"].default_hostname, health = "/health" }
+    },
+    local.edge_tls_stage ? { for k, app in azurerm_linux_web_app.main : k => {
       fqdn = app.default_hostname, health = var.apps[k].health_path
-  } })
+    } } : {},
+  ) : {}
 }
 
 resource "azurerm_application_gateway" "main" {
+  for_each            = local.edge_stage ? { public = true } : {}
   name                = "${local.prefix}-appgw"
   location            = var.location
   resource_group_name = local.rg
   zones               = var.edge.zones
-  firewall_policy_id  = azurerm_web_application_firewall_policy.appgw.id
+  firewall_policy_id  = azurerm_web_application_firewall_policy.appgw[each.key].id
   tags                = local.tags
   sku {
     name = "WAF_v2"
@@ -52,44 +135,52 @@ resource "azurerm_application_gateway" "main" {
     subnet_id = azurerm_subnet.main["appgw"].id
   }
   frontend_ip_configuration {
-    name                            = "private"
-    subnet_id                       = azurerm_subnet.main["appgw"].id
-    private_ip_address              = var.network.app_gateway_ip
-    private_ip_address_allocation   = "Static"
-    private_link_configuration_name = "frontdoor"
-  }
-  private_link_configuration {
-    name = "frontdoor"
-    ip_configuration {
-      name                          = "primary"
-      subnet_id                     = azurerm_subnet.main["link"].id
-      private_ip_address_allocation = "Dynamic"
-      primary                       = true
-    }
+    name                 = "public"
+    public_ip_address_id = azurerm_public_ip.appgw[each.key].id
   }
   frontend_port {
-    name = "https"
-    port = 443
+    name = "http"
+    port = 80
   }
-  ssl_certificate {
-    name                = "origin"
-    key_vault_secret_id = var.edge.certificate_secret_id
+  dynamic "frontend_port" {
+    for_each = local.edge_tls_stage ? [1] : []
+    content {
+      name = "https"
+      port = 443
+    }
+  }
+  dynamic "ssl_certificate" {
+    for_each = local.edge_tls_stage ? [1] : []
+    content {
+      name                = "origin"
+      key_vault_secret_id = var.edge.certificate_secret_id
+    }
   }
   ssl_policy {
     policy_type = "Predefined"
     policy_name = "AppGwSslPolicy20220101S"
   }
   http_listener {
-    name                           = "private-https"
-    frontend_ip_configuration_name = "private"
-    frontend_port_name             = "https"
-    protocol                       = "Https"
+    name                           = "challenge-http"
+    frontend_ip_configuration_name = "public"
+    frontend_port_name             = "http"
+    protocol                       = "Http"
     host_name                      = var.edge.origin_hostname
-    require_sni                    = true
-    ssl_certificate_name           = "origin"
+  }
+  dynamic "http_listener" {
+    for_each = local.edge_tls_stage ? [1] : []
+    content {
+      name                           = "public-https"
+      frontend_ip_configuration_name = "public"
+      frontend_port_name             = "https"
+      protocol                       = "Https"
+      host_name                      = var.edge.origin_hostname
+      require_sni                    = true
+      ssl_certificate_name           = "origin"
+    }
   }
   global {
-    request_buffering_enabled  = false
+    request_buffering_enabled  = true
     response_buffering_enabled = false
   }
   dynamic "backend_address_pool" {
@@ -108,6 +199,7 @@ resource "azurerm_application_gateway" "main" {
       protocol                            = "Https"
       pick_host_name_from_backend_address = true
       probe_name                          = backend_http_settings.key
+      path                                = backend_http_settings.key == "deny" ? "/_edge-denied/" : null
       request_timeout                     = var.edge.app_gateway_timeout_seconds
     }
   }
@@ -127,142 +219,64 @@ resource "azurerm_application_gateway" "main" {
     }
   }
   request_routing_rule {
-    name               = "routes"
-    priority           = 100
+    name               = "challenge"
+    priority           = 90
     rule_type          = "PathBasedRouting"
-    http_listener_name = "private-https"
-    url_path_map_name  = "routes"
+    http_listener_name = "challenge-http"
+    url_path_map_name  = "challenge"
   }
   url_path_map {
-    name                               = "routes"
-    default_backend_address_pool_name  = "customer"
-    default_backend_http_settings_name = "customer"
+    name                               = "challenge"
+    default_backend_address_pool_name  = "deny"
+    default_backend_http_settings_name = "deny"
     path_rule {
-      name                       = "inference"
-      paths                      = ["/v1", "/v1/*"]
-      backend_address_pool_name  = "apim"
-      backend_http_settings_name = "apim"
-    }
-    path_rule {
-      name                       = "control-plane"
-      paths                      = ["/api", "/api/*", "/health", "/ready"]
+      name                       = "acme"
+      paths                      = ["/.well-known/acme-challenge/*"]
       backend_address_pool_name  = "api"
       backend_http_settings_name = "api"
     }
-    path_rule {
-      name                       = "admin"
-      paths                      = ["/admin", "/admin/*"]
-      backend_address_pool_name  = "admin"
-      backend_http_settings_name = "admin"
+  }
+  dynamic "request_routing_rule" {
+    for_each = local.edge_tls_stage ? [1] : []
+    content {
+      name               = "routes"
+      priority           = 100
+      rule_type          = "PathBasedRouting"
+      http_listener_name = "public-https"
+      url_path_map_name  = "routes"
+    }
+  }
+  dynamic "url_path_map" {
+    for_each = local.edge_tls_stage ? [1] : []
+    content {
+      name                               = "routes"
+      default_backend_address_pool_name  = "customer"
+      default_backend_http_settings_name = "customer"
+      path_rule {
+        name                       = "inference"
+        paths                      = ["/v1", "/v1/*"]
+        backend_address_pool_name  = "deny"
+        backend_http_settings_name = "deny"
+      }
+      path_rule {
+        name                       = "control-plane"
+        paths                      = ["/api", "/api/*", "/health", "/ready", "/.well-known/acme-challenge/*"]
+        backend_address_pool_name  = "api"
+        backend_http_settings_name = "api"
+      }
+      path_rule {
+        name                       = "admin"
+        paths                      = ["/admin", "/admin/*"]
+        backend_address_pool_name  = "admin"
+        backend_http_settings_name = "admin"
+      }
     }
   }
   depends_on = [
+    terraform_data.approval,
     azurerm_role_assignment.edge_certificate,
-    azurerm_private_dns_a_record.apim,
-    azurerm_private_endpoint.main,
+    terraform_data.sql_firewall_gate,
     azurerm_subnet_network_security_group_association.appgw,
+    azurerm_network_security_rule.appgw_platform,
   ]
-}
-
-resource "azurerm_cdn_frontdoor_profile" "main" {
-  name                     = "${local.prefix}-frontdoor"
-  resource_group_name      = local.rg
-  sku_name                 = "Premium_AzureFrontDoor"
-  response_timeout_seconds = var.edge.request_timeout_seconds
-  tags                     = local.tags
-  depends_on               = [terraform_data.approval]
-}
-
-resource "azurerm_cdn_frontdoor_endpoint" "main" {
-  name                     = "${local.prefix}-edge"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
-  tags                     = local.tags
-}
-
-resource "azurerm_cdn_frontdoor_origin_group" "main" {
-  name                     = "appgateway"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
-  session_affinity_enabled = false
-  load_balancing {
-    sample_size                 = 4
-    successful_samples_required = 3
-  }
-  health_probe {
-    path                = "/health"
-    protocol            = "Https"
-    request_type        = "GET"
-    interval_in_seconds = 60
-  }
-}
-
-resource "azapi_resource" "frontdoor_origin" {
-  type      = "Microsoft.Cdn/profiles/originGroups/origins@2025-04-15"
-  parent_id = azurerm_cdn_frontdoor_origin_group.main.id
-  name      = "private-appgateway"
-  body = {
-    properties = {
-      enabledState                = "Enabled"
-      enforceCertificateNameCheck = true
-      hostName                    = var.edge.origin_hostname
-      originHostHeader            = var.edge.origin_hostname
-      httpPort                    = 80
-      httpsPort                   = 443
-      priority                    = 1
-      weight                      = 1000
-      sharedPrivateLinkResource = {
-        groupId             = "private"
-        privateLink         = { id = azurerm_application_gateway.main.id }
-        privateLinkLocation = var.edge.private_link_location
-        requestMessage      = "AIFLUX Front Door to private Application Gateway; approve only this profile."
-      }
-    }
-  }
-}
-
-resource "azurerm_cdn_frontdoor_route" "main" {
-  name                          = "private-edge"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.main.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.main.id
-  cdn_frontdoor_origin_ids      = [azapi_resource.frontdoor_origin.id]
-  patterns_to_match             = ["/*"]
-  supported_protocols           = ["Https"]
-  forwarding_protocol           = "HttpsOnly"
-  https_redirect_enabled        = true
-  link_to_default_domain        = true
-  enabled                       = false
-}
-
-resource "azurerm_cdn_frontdoor_firewall_policy" "main" {
-  name                = "${local.compact}edgewaf"
-  resource_group_name = local.rg
-  sku_name            = "Premium_AzureFrontDoor"
-  enabled             = true
-  mode                = "Prevention"
-  tags                = local.tags
-  managed_rule {
-    type    = "Microsoft_DefaultRuleSet"
-    version = "2.1"
-    action  = "Block"
-  }
-  managed_rule {
-    type    = "Microsoft_BotManagerRuleSet"
-    version = "1.0"
-    action  = "Block"
-  }
-}
-
-resource "azurerm_cdn_frontdoor_security_policy" "main" {
-  name                     = "edge-waf"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
-  security_policies {
-    firewall {
-      cdn_frontdoor_firewall_policy_id = azurerm_cdn_frontdoor_firewall_policy.main.id
-      association {
-        patterns_to_match = ["/*"]
-        domain {
-          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.main.id
-        }
-      }
-    }
-  }
 }

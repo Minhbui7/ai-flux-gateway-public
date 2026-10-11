@@ -42,16 +42,28 @@ variable "storage_account_name" {
 variable "private_endpoint_subnet_id" {
   description = "Existing operator-network subnet, reachable by deployment runners."
   type        = string
+  validation {
+    condition     = can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.Network/virtualNetworks/[^/]+/subnets/[^/]+$", var.private_endpoint_subnet_id))
+    error_message = "Supply an existing operator-network subnet ARM resource ID."
+  }
 }
 
 variable "private_dns_zone_id" {
   description = "Existing privatelink.blob.core.windows.net zone linked to runner VNet."
   type        = string
+  validation {
+    condition     = can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.Network/privateDnsZones/privatelink\\.blob\\.core\\.windows\\.net$", var.private_dns_zone_id))
+    error_message = "Supply the existing private blob DNS zone ARM resource ID."
+  }
 }
 
 variable "runner_principal_id" {
   description = "Existing federated deployment identity; no credential created."
   type        = string
+  validation {
+    condition     = can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.runner_principal_id))
+    error_message = "Supply the existing federated deployment identity principal UUID, not a client ID or VM name."
+  }
 }
 
 variable "deployment_approved" {

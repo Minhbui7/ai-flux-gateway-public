@@ -26,14 +26,28 @@ function isSecureOrLocal(url: URL): boolean {
 export function loadConfig(env: Env): ConfigResult {
   const problems: string[] = [];
   const clientId = str(env.VITE_ENTRA_CLIENT_ID);
-  const authority = str(env.VITE_ENTRA_AUTHORITY);
+  const authority = str(env.VITE_ENTRA_AUTHORITY) || "https://login.microsoftonline.com/organizations";
   const apiScope = str(env.VITE_API_SCOPE);
   const controlApiUrl = str(env.VITE_CONTROL_API_URL) || "/api";
   const gatewayUrl = str(env.VITE_GATEWAY_URL);
 
   if (!GUID.test(clientId)) problems.push("VITE_ENTRA_CLIENT_ID must be an application (client) ID GUID.");
-  if (authority.replace(/\/+$/, "") !== "https://login.microsoftonline.com/organizations") {
-    problems.push("VITE_ENTRA_AUTHORITY must be https://login.microsoftonline.com/organizations (organizational accounts only).");
+  let authorityUrl: URL | undefined;
+  try {
+    authorityUrl = new URL(authority);
+  } catch {
+    problems.push("VITE_ENTRA_AUTHORITY must use organizations or a tenant GUID on login.microsoftonline.com.");
+  }
+  if (
+    authorityUrl &&
+    (authorityUrl.origin !== "https://login.microsoftonline.com" ||
+      authorityUrl.username ||
+      authorityUrl.password ||
+      !/^\/(?:organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.test(authorityUrl.pathname) ||
+      authorityUrl.search ||
+      authorityUrl.hash)
+  ) {
+    problems.push("VITE_ENTRA_AUTHORITY must use organizations or a tenant GUID on login.microsoftonline.com.");
   }
   if (!apiScope || /\s/.test(apiScope)) problems.push("VITE_API_SCOPE must be a single API scope, for example api://<app-id>/access_as_user.");
 
@@ -58,7 +72,7 @@ export function loadConfig(env: Env): ConfigResult {
     ok: true,
     config: {
       clientId,
-      authority: "https://login.microsoftonline.com/organizations",
+      authority: authority.replace(/\/+$/, ""),
       apiScope,
       controlApiUrl: controlApiUrl.replace(/\/+$/, ""),
       gatewayUrl: gatewayUrl.replace(/\/+$/, ""),

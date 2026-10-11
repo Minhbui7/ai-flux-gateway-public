@@ -1,239 +1,554 @@
-# Terraform infrastructure and operator runbook
+# Hybrid development Terraform and local operator runbook
 
-## Status and ownership
+## Decision, status and ownership
 
-The infrastructure is schema-validated Terraform, **not an Azure deployment or a released gateway**.
-No paid resources, model deployments, tenant/app registrations, keys, or runtime subscriptions
-were created by this worker. The parent separately created the resource-group metadata:
+Development uses **public app endpoints, Basic v2 APIM and Entra authorization**,
+with approved private endpoints only for SQL, Key Vault and Function storage.
+Application Gateway WAF_v2 is deployed in `edge-candidate`; its HTTPS listener
+currently fails Key Vault certificate validation and is not accepted for release.
+`infra\terraform` owns the existing VNet and the hybrid additions; do not apply
+`infra\operator` against that VNet (it is a separate, incompatible ownership root).
+No VM, mandatory private runner, NAT or private Terraform backend is introduced.
+Basic v2 APIM and Foundry stay public, without private endpoints or APIM integration.
 
-- Subscription: `4d75ed7f-75ab-4db6-b1f3-263f240d1450`
-  (`MCAPS-Hybrid-REQ-67039-2023-ajanakiraman`).
-- Existing RG: `rg-aiflux-fdpo-dev`, metadata location `eastus`, provisioning succeeded.
-- Terraform consumes that RG using a **data source**. It does not own, replace, import or
-  destroy the RG. Resource-group location does not constrain resources or prove regional
-  model/SKU support. The gateway region is a separate reviewed input.
+### Approved hybrid data path
 
-`deployment_approved=false` fails a real plan before deployment. Approval refers to
-infrastructure costs/configuration only, **never** inference capability.
-The Front Door route, APIM Product and Function host are hard-disabled; inference remains
-blocked independently by global/API policy. See `docs\gateway.md`.
+Set `hybrid_private_data_enabled = true` with all three data services' public
+network access flags false. The active ignored `fdpo.deployed.tfvars` preserves
+those governance-disabled interfaces. In the East US `10.240.0.0/16` VNet,
+`10.240.3.0/24` hosts five endpoints: SQL, vault, blob, queue and table.
+Each has its matching private DNS zone linked to this VNet with registration
+disabled: `privatelink.database.windows.net`, `privatelink.vaultcore.azure.net`,
+and `privatelink.{blob,queue,table}.core.windows.net`.
+API and disabled ingestion Function alone integrate outbound through
+`10.240.4.0/24`, delegated to `Microsoft.Web/serverFarms`. Customer/admin apps
+remain uninvolved. Public app/SCM access restrictions and the existing App Gateway
+subnet's `Microsoft.Web` service endpoint are retained.
 
-## Resource inventory
+SQL stays in Australia East; a private-link target may be in a different region
+from the East US endpoint/VNet. Use the original `<server>.database.windows.net`
+FQDN, not a private IP or private-link hostname, in SQL connections. Explicit SQL
+`Proxy` policy limits private SQL traffic to TCP 1433. Private-endpoint Redirect
+requires 1433–65535, **not** the public-endpoint 11000–11999 rule. Integration NSG
+allows TCP 1433/443 to the data subnet and denies other ports to it; normal Azure
+DNS and existing public egress remain unchanged (no route-all/NAT requirement).
 
-`infra\terraform\` pins Terraform `~>1.16.0`, AzureRM `5.9.0`, AzAPI `2.13.0`.
-Both deployment and state lockfiles contain signed Windows/Linux AMD64 package checksums.
-No Terraform executable/provider binary is tracked. This implementation was checked with
-a checksum-verified workspace-local Terraform `1.16.5` in ignored `infra\.tools`.
+The P1v3 dedicated Linux Function uses managed-identity host storage with
+`content_share_force_disabled = true`; no Azure Files content share or connection
+string is configured, so no paid File endpoint is provisioned. Reassess this only
+if the deployment model actually adds an Azure Files share. Provider refresh has
+previously reported this field false despite the configured true value; do not
+mistake that known drift for permission to create a share or enable shared keys.
 
-| Surface | Implemented resources/configuration |
+Hybrid mode removes public SQL outbound-IP capture/firewall gating. Edge release
+instead requires `private_sql_connectivity_accepted` after actual identity grants,
+migrations and live API/Function SQL acceptance, independently of
+`public_edge_live_gates_approved`. Both remain false for deployment. Management
+plane endpoint approval/DNS records do **not** prove application readiness.
+The API uses its managed identity against APIM ARM to manage subscription keys;
+do not invent Key Vault named values for Basic v2 APIM, which cannot reach this
+private vault. Existing vault role assignments do not establish APIM reachability.
+
+Prefer bearer-authenticated operator-restricted App Service Kudu execution to
+verify DNS and TCP from the existing integrated app without creating compute.
+Do not output tokens, settings, SQL payloads or certificates. Kudu's SCM context
+may differ from the running application; state the verification scope precisely.
+If remote execution is unavailable, SQL grants/migrations and private vault upload
+remain pending a separately approved private execution route. Do not register new
+providers or silently provision NAT, ACI, Container Apps environments or paid ACR
+agent pools. Local laptop connections cannot reach the private endpoints.
+
+The SQL initialization preflight on 2026-10-11 verified the current operator is
+still the configured Entra SQL administrator, both runtime identity object/client
+IDs match deployment evidence, and the API's production audience, home tenant,
+bootstrap object ID and managed-identity client ID are configured. SQL is Online
+at S0 with public access Disabled, Proxy policy and zero firewall rules.
+The operator laptop resolves the SQL FQDN to public `20.53.46.128`, and a bounded
+TCP probe of private `10.240.3.6:1433` timed out. The repository virtual environment
+has `pyodbc`, but Windows has no ODBC Driver 18; installing a driver alone would
+not fix the missing private route.
+Bearer-only SCM command execution works, but its sidecar has Python 3.9 and no
+`sqlcmd` or application `/app` directory; it is not the deployed API container.
+The deployed API Dockerfile has no SSH server configuration, and SCM tunnel
+discovery did not establish a supported operator-to-SQL transport. Do not relay an
+operator SQL token in a Kudu command body: command payload retention is not proven
+secret-safe. Do not temporarily replace the SQL Entra administrator with a runtime
+identity without separate explicit approval, or grant Graph Directory Readers.
+That preflight executed no SQL DDL/grants/bootstrap and changed no administrator.
+
+The subsequently **explicitly approved** temporary managed-identity administration
+initialized SQL through the existing VNet-integrated production API container.
+SCM VFS maps its root to `/home`; its command sidecar is not the API image.
+The one-off startup used `infra\sql\init-managed-identity.py`, production ODBC 18
+and `ManagedIdentityCredential` inside the API, with no relayed operator SQL token.
+The script validated private-only SQL DNS, migration revision `0001`, actual UAMI
+contained users, scoped ingestion grants and the single approved home-tenant IDS
+bootstrap membership. SQL contained-user SIDs for managed identities must use
+binary **client IDs**; ARM Entra administration uses principal **object IDs**.
+An initial object-ID SID attempt failed runtime login and was narrowly repaired.
+No Graph lookup or directory role change was needed.
+
+The full original ARM administrator/server metadata was snapshotted into ignored
+`infra\.sql-init` recovery evidence. Every attempted elevation restored and
+verified that metadata, Entra-only authentication and disabled public SQL access
+in cleanup. Post-restoration verification obtained a fresh API managed-identity
+SQL connection and confirmed revision, bootstrap and schema CRUD without
+`db_owner`, database CONTROL or schema ALTER. Temporary startup/storage settings
+were restored and checked; one-off remote scripts/markers were deleted.
+API `/health` and `/ready` returned 200 after restoring the normal startup.
+The post-restoration Terraform plan has zero additions/deletions and only the
+four previously known App Service logs/content-share refresh updates; SQL
+administration has no drift. These unrelated refresh changes were not applied.
+Function execution, inference, TLS certificate upload and public-edge release
+remain disabled/pending independently of SQL initialization.
+
+The approved hybrid apply completed with **19 additions, five in-place updates,
+zero destructions** (five endpoints, five DNS zones, five VNet links, two subnets,
+one NSG and its association). All endpoints are `Succeeded`/`Approved`; DNS A
+records and VNet links are verified. Operator ARM-bearer-only API Kudu execution
+resolved all five original FQDNs to private addresses and established TCP to
+SQL `10.240.3.6:1433`. The raw telnet probe subsequently reset because it was not
+a SQL TDS login; this proves transport only. SCM execution is not a SQL
+managed-identity/application-login proof. API `/health` is 200 and `/ready` stays
+503; contained users, migrations, member bootstrap and private vault certificate
+upload are still pending. No extra compute or provider registration was created.
+Post-apply plan has no additions/deletions and only the four previously known
+logs/content-share refresh updates, which were not reapplied. Local checks pass:
+22 main-root mock tests, eight operator tests, three state tests, 17 gateway
+contracts and the disabled bundle validator.
+
+The existing, externally owned RG is `rg-aiflux-fdpo-dev`, subscription
+`4d75ed7f-75ab-4db6-b1f3-263f240d1450`, location `eastus`. It remains a data source:
+Terraform does not create/import/destroy the RG or modify unrelated workloads.
+APIM-first provisioning has succeeded: Basic v2 APIM, Monitor/App Insights, RBAC
+Key Vault and Content Safety exist. The remaining deployment is explicitly partial,
+not a same-day readiness claim. Initial dedicated Language provisioning returned
+`SpecialFeatureOrQuotaIdRequired`; the approved replacement is the Microsoft Foundry
+umbrella `AIServices` S0 resource `aiflux-fdpo-dev-foundry` in East US. Terraform
+created only that resource and its gateway-scoped `Cognitive Services User` role
+assignment (two additions, zero changes/deletions); Content Safety was retained.
+A synthetic-email Language PII REST smoke test using an operator AAD token detected
+and redacted the entity without logging request/response payloads. This verifies only
+the operator's endpoint access: gateway managed-identity access, gateway PII policy,
+request-shape coverage, fail-closed handling, and production logging controls are not
+yet accepted or proven. The earlier entitlement failure was for a dedicated
+TextAnalytics resource; it did not block this Foundry resource.
+An earlier tenant-policy decision rejected `AzureADMultipleOrgs`. Per the operator's
+explicit DEV-only approval, dedicated API/customer/admin registrations now use
+`AzureADMyOrg`; no tenant policy was changed or bypassed. API scope
+`access_as_user`, role `ids_admin`, both SPA redirects and preauthorized client IDs
+were verified. The customer production environment must satisfy its separate
+multi-tenant registration requirements. API authorization still requires both an
+approved tenant and an explicitly approved user, with IDS administrator membership
+restricted to the home tenant. The portal defaults to `organizations` for
+compatibility and accepts only an explicit tenant GUID as the alternate authority.
+ARM currently still reports Key Vault and Function Storage public network access
+as `Disabled`, despite the operator's report of manual changes. No access mutation
+or repeated enable attempt is made until the approved state is observed live.
+Shared keys and anonymous blobs remain disabled.
+The independent prerequisites apply created Basic ACR `aifluxfdpodevacr`,
+P1v3 plan `aiflux-fdpo-dev-apps-plan`, Function storage `aifluxfdpodevfunc`,
+the VNet/AppGW subnet and API/customer/admin/ingestion managed identities with
+resource-scoped registry/Monitor/storage/APIM roles. Basic ACR, remote builds and
+the idle P1v3 plan add dev costs even without running apps.
+SQL S0 and database `aiflux` are Online in Australia East; apps remain in East
+US and the operator accepts the cross-region latency/egress. The server has the
+verified Entra-only administrator. ARM reports SQL public network access
+`Disabled`; creating even the exact operator firewall rule failed with
+`DenyPublicEndpointEnabled`. The configuration now preserves that disabled state,
+suppresses firewall writes rather than retrying or widening access. The earlier
+31-address capture is historical and no longer a hybrid dependency; private SQL
+runtime acceptance replaces the former `sql-public-endpoint` blocker. No SQL migration or member
+bootstrap was attempted: local `pyodbc` and ODBC Driver 18 are unavailable, and
+no migration credential was relayed to a remote task. `/ready` therefore remains
+503. Runtime Function remains disabled.
+The APIM metadata diagnostic was applied after correcting live API validation:
+wildcard query masking must stand alone and `operationNameFormat` is not supported
+for Azure Monitor diagnostics. HTTP body capture is zero and client-IP logging off.
+ACR remote build `ca1` succeeded and published the actual local API source as
+`aiflux/api@sha256:e287f94675ae9430d668de3d0d096190685c7fd7ece501dd121fa889f13a46f9`.
+The CLI log stream encountered a Windows Unicode encoding error; the existing
+server-side run and registry manifest were queried to confirm success, without
+submitting a duplicate build. Remote ACR builds `ca4` and `ca5` succeeded using
+the dedicated single-tenant SPA client IDs and tenant-GUID authority. Customer
+and admin images are pinned by their resulting immutable SHA-256 digests in the
+ignored deployed tfvars.
+ACR smoke run `ca3` executed that immutable API image: a real localhost Uvicorn
+process returned `/health` 200 and denied unconfigured `/ready` with 503; ODBC
+Driver 18 was present, and the process was stopped within the task. This is image
+startup verification, not live App Service/auth/SQL readiness. The smoke task is
+`services\control-plane\acr-smoke.yaml`, inside the permitted upload context.
+The platform stage deployed the API/customer/admin App Services and disabled
+ingestion host (four additions, zero changes/deletions). Their default hosts are
+restricted to the reviewed operator `/32` and App Gateway subnet; live probes
+returned API `/health` 200, portal health 200, and API `/ready` 503. The portal
+redirects target the eventual shared gateway host, so browser sign-in awaits the
+TLS/DNS edge. Twenty mocked Terraform tests and seventeen contract tests pass;
+all live gateway capability gates remain unverified. Nonsecret resource/client
+IDs, image digests and exact blockers are recorded in ignored
+`infra\terraform\live-evidence.json`. Local deployed inputs remain in ignored
+`infra\terraform\environments\fdpo.deployed.tfvars`.
+Live APIM verification returned Product state `notPublished` with subscription
+and approval required; anonymous `/v1/models` returned 503, retaining the
+fail-closed disabled gateway rather than enabling inference.
+
+The main root pins Terraform `~>1.16.0` (locally `1.16.5`), AzureRM `5.9.0` and
+AzAPI `2.13.0`. Providers do not auto-register resource providers. Use local Azure CLI
+authentication and protected local state; do not set shared Azure CLI account defaults.
+
+## Cumulative stages and resource inventory
+
+| Stage | Resources |
 | --- | --- |
-| Edge | Front Door **Premium**, default HTTPS endpoint, prevention WAF, no cache block; disabled route to private AppGW origin |
-| App Gateway | WAF_v2, private-only listener/frontend, Private Link configuration, TLS from **existing** Key Vault secret reference, HTTPS private backends, request/response buffering disabled |
-| APIM | PremiumV2 candidate, **Internal injection at creation**, delegated dedicated subnet, NSG, hostname-specific private DNS A record from returned private VIPs |
-| Applications | Separate Linux container App Services for customer, admin, API; public origins/publishing basic auth disabled, outbound VNet integration, managed ACR pull |
-| Data | Azure SQL server/database, Entra-only authentication and TLS 1.2, public access disabled, private endpoint, database prevent_destroy |
-| AI protection | Language TextAnalytics S0 and ContentSafety S0 accounts via documented AzAPI, local-key auth disabled, private endpoints and Cognitive Services User for gateway identity |
-| Secrets | RBAC Key Vault, soft-delete/purge protection, no public access, private endpoint; **no secret values read/written** |
-| Telemetry | Log Analytics, workspace App Insights with local auth disabled, metadata-only APIM HTTP/LLM diagnostic configuration and dedicated gateway/LLM log categories |
-| Ingestion | Disabled Python 3.11 timer Function host on dedicated App Service plan, private SCM/origin, AzureWebJobsStorage managed identity, keyless private blob/queue/table endpoints |
-| Identity | Separate user-assigned gateway/edge/API/customer/admin/ingestion identities, resource-scoped roles, no Entra registration or Graph permission creation |
-| State bootstrap | Separate `infra\state\` root for private ZRS storage, Azure AD-only access, versioning/soft deletion, private endpoint, container-scoped runner Blob Data Contributor |
+| `apim` | Public `BasicV2_1` (capacity configurable), public RBAC Key Vault, public keyless Foundry `AIServices` S0 for Language PII and Content Safety S0, gateway identity, metadata-only Monitor/App Insights |
+| `prerequisites` | Approved P1v3 Linux plan, Entra-only SQL S0 unless explicitly deferred, keyless Function storage, four additional managed identities/resource-scoped roles, isolated VNet/AppGW subnet; no runtime apps or edge and no fabricated Entra/image configuration |
+| `platform` | P1v3 Linux plan, three TLS public App Services with deny-default access restrictions, Entra-only SQL S0 with `prevent_destroy`, disabled managed-identity Function and keyless/nonanonymous storage; approved hybrid endpoints/DNS and API/Function outbound integration |
+| `public-edge` | Public zonal Standard static IP, Application Gateway WAF_v2 HTTPS/SNI listener, existing Key Vault certificate, HTTPS backends and `/`, `/admin/`, `/api/`, `/v1/` routes |
 
-Language, Content Safety, storage and Front Door origin AzAPI bodies use published API
-versions with schema validation enabled. Front Door origin uses AzAPI because AzureRM's
-`private_link.target_type` enum doesn't accept AppGW's private frontend groupId. The
-documented `sharedPrivateLinkResource.groupId="private"` and AppGW resource ID are used;
-no private-link connection is automatically approved.
+The isolated, unpeered `10.240.0.0/16` network retains the dedicated AppGW
+`10.240.1.0/24` subnet plus the hybrid `.3/24` and `.4/24` subnets described above.
+It is created at `prerequisites` or `platform`, with `Microsoft.Web` service
+endpoint enabled so App Service origin restrictions can be established before the
+edge. No corporate peering/VPN review is a dependency for this unpeered dev design;
+review overlap/routing afresh if connectivity is added later.
 
-The sample's outbound Standard v2 networking was **not** substituted for private
-Premium v2 injection. Injection uses `Microsoft.Web/hostingEnvironments`; application
-integration uses `Microsoft.Web/serverFarms`. APIM `public_network_access_enabled`
-retains the provider's creation default because ARM management access is needed;
-`virtual_network_type="Internal"` is the gateway isolation mechanism. Do not mistake
-the management setting for a public inference listener. Prove this on the actual service.
+`deployment_approved=false` blocks planning until costs/configuration are approved.
+`public_edge_live_gates_approved=false` separately blocks edge deployment until
+operator acceptance of app restrictions, authorization, SQL connectivity, certificate/DNS,
+WAF configuration and backend checks. First edge creation necessarily needs **post**
+creation TLS/probe/WAF checks too; the flag is not evidence of a running WAF.
+Do not claim those live checks have passed before the edge exists.
+The APIM Product stays unpublished, both API/global policies deny, the catalog is
+unconfigured and the Function host is disabled in **all** stages. No flag enables
+inference. Models and native API implementation remain a separate release.
+Deferring Language blocks `public-edge` even with live approval. Deferring SQL
+blocks both runtime stages. `gateway_origin_hostname` configures the candidate
+HTTPS URL before edge provisioning; it does not advertise a live endpoint.
 
-AppGW NSG permits Private Link NAT-subnet listener traffic, platform health and
-management, and denies other direct TLS listeners. APIM NSG permits AppGW TLS/platform
-health and rejects other TLS clients. Network security group default egress is not a
-domain-filtering firewall; public outbound service dependencies remain allowed.
-Strict egress allowlisting/private model connectivity requires a reviewed network design.
-Private application endpoints are not authorization boundaries against trusted VNet
-operators: the control API still must enforce Entra/membership authorization.
+Stage selection uses the **same state** and is cumulative, not additive: moving
+back to an earlier stage plans to remove later resources. Review full plans; no
+`-target`. Never roll a deployed platform back to `apim` without data-retention/state
+review. To remove only the edge, review a `platform` plan; SQL `prevent_destroy`
+continues to protect the database.
 
-## Required operator decisions before a plan
+## Public does not mean anonymous or bypass-safe
 
-Fill `environments\fdpo.tfvars.example` into an **ignored** `.tfvars` after review.
-Empty strings deliberately make it unusable as-is. Numerical sizing/window values in
-the example are illustrative development inputs, not approved production settings.
+- SQL uses TLS 1.2+, Entra-only administration and contained runtime identities.
+  In hybrid mode the public interface is disabled and firewall/IP capture is skipped;
+  `operator_ip` restricts public app/SCM management only, not private SQL access.
+  The following exact-firewall steps apply only to the optional legacy public-data mode.
+  `operator_ip` is mandatory for platform/edge, an exact reviewed public IPv4 only.
+  `0.0.0.0` / AllowAzureServices, CIDR ranges, private/loopback/IPv6 addresses are
+  rejected. App/Function possible outbound IPs are individually reviewed and entered
+  into `sql_firewall_ipv4s`; there is no all-Azure firewall exception.
+- Platform creation emits `sql_required_outbound_ipv4s`. Since those addresses do not
+  exist before the apps, first create platform with operator access, then review
+  the actual output and **apply a second platform plan** adding exact SQL rules.
+  API readiness is not expected before those rules and SQL grants are installed.
+  An edge precondition rejects missing possible-outbound IP coverage. Refresh rules
+  after plan/SKU/scale changes; do not infer App Service outbound addresses from
+  Application Gateway's public IP.
+- Web origins/SCM use deny-default restrictions: allow the AppGW subnet via the
+  `Microsoft.Web` service endpoint and the explicit operator `/32`. This is public
+  service-endpoint routing, **not Private Link**. The operator is an intentional
+  direct-access exception; test denied untrusted-origin/SCM access live before release.
+  The disabled Function allows only that operator `/32`.
+- AI protection endpoints remain public; Key Vault is private in hybrid mode.
+  Identity/RBAC authorization is still required. AI local/key auth is disabled. Basic v2
+  has **no deterministic dedicated outbound IP**: do not fabricate an APIM outbound
+  allowlist for AI. Future model pools must use validated managed-identity/provider
+  authentication, not anonymous access or synthetic endpoint/IP catalogs.
+- Hybrid storage uses private blob/queue/table HTTPS endpoints; shared keys and anonymous blobs are disabled,
+  OAuth is preferred and dedicated host-storage data roles are retained. A public
+  network ACL is not a data permission.
+- ACR is an existing public, authenticated registry, or a dedicated Basic registry
+  maintained in this state when `create_container_registry=true`. Admin and anonymous
+  pull are disabled; app identities receive resource-scoped `AcrPull`.
+  No registry admin password is put into Terraform or app settings.
+- APIM's native public hostname **can bypass AppGW networking**. It is safe only in the
+  current deny-all state, not proof that WAF protects future inference. Before releasing
+  inference, implement and live-prove native origin controls (for example a reviewed
+  native `ip-filter` accepting the actual AppGW source IP) plus Entra/native subscription
+  validation. Prove direct-origin denial and health-probe behavior; header secrecy or
+  an unverified static-IP assumption is not origin proof. This control is **deferred**,
+  not secretly activated by Terraform.
 
-1. Cost approval: Premium Front Door/APIM, zone-capable AppGW, plan/database/AI capacities,
-   retention, budgets and named owners. No cheap classic SKU that changes tested features.
-2. Gateway/Private Link/AI-service regions and Azure provider/SKU quota availability.
-   Premium v2 injection is chosen **at creation** and cannot be switched later.
-   Verify zone redundancy/availability; no APIM multi-region DR is configured.
-3. Reviewed nonoverlapping address ranges; dedicated /24 recommended APIM/AppGW subnets,
-   private-link NAT subnet, /26-or-larger shared integration subnet sized for hosts/scaling,
-   private-endpoint subnet, private DNS/peering and deployment-runner connectivity.
-4. Verify private-only Application Gateway network isolation availability/feature
-   registration in this subscription. Register required providers outside Terraform
-   (providers intentionally use `resource_provider_registrations="none"`):
-   Microsoft.ApiManagement, Microsoft.Network, Microsoft.Web, Microsoft.Cdn,
-   Microsoft.Sql, Microsoft.Storage, Microsoft.KeyVault, Microsoft.CognitiveServices,
-   Microsoft.Insights, Microsoft.OperationalInsights, Microsoft.ManagedIdentity,
-   Microsoft.Authorization. Do not change global Azure account defaults.
-5. Operator-owned origin DNS hostname and matching unexpired public-trust TLS certificate
-   in an **existing reachable** Key Vault. Supply vault resource ID and **versionless**
-   certificate secret URI, never PFX/private-key contents. The edge identity gets
-   Secrets User on that vault; its firewall/private endpoint/DNS must already permit
-   AppGW to retrieve the certificate. Do not broaden vault access to make TLS work.
-6. Existing ACR resource ID and reviewed immutable image references/registry URLs,
-   ports and health probes. If ACR is private, provide runner/app routing and DNS
-   separately; no registry or model endpoints are fabricated or deployed by default.
-7. Real Entra audience, client ID, home tenant/bootstrap object IDs and Entra SQL
-   administrator identity. Applications/scopes/consent/approved tenants/users are
-   configured externally; no fake tenant or authentication bypass is created.
-8. Reviewed model catalog, endpoint access/RBAC or Key Vault credentials, actual
-   inspection settings, IDS limits, safety thresholds, native rollout and full acceptance
-   attestation. These remain absent and inference stays disabled.
+PII redaction through Foundry's Language API, Content Safety/Prompt Shields, SSE inspection, native subscription
+scope/quotas and no-sensitive-log gates remain mandatory. WAF/access diagnostics stay
+off until sensitive-field scrubbing is proven; APIM diagnostics omit HTTP bodies and
+LLM message capture. Public connectivity never relaxes tenant/member authorization.
 
-The Azure Developer CLI skill dependency check reported missing `azd`. No global
-installation was attempted. The selected Terraform/ARM workflow does not need azd.
+## Required inputs and remaining blockers
 
-## State bootstrap and validation commands
+Copy `infra\terraform\environments\fdpo.tfvars.example` to an ignored `.tfvars`.
+It selects APIM first, approval false, publisher `ajanakiraman@microsoft.com`,
+P1v3/S0 and the approved isolated network. Complete externally verified inputs:
 
-Use an operator/federated identity on a private-network runner. `infra\state\` starts
-with local state only to solve the bootstrap dependency; protect that file with filesystem
-ACLs, never commit it, and migrate its state to a **separate bootstrap key** after creation.
-Provide an existing operator-network subnet and linked private blob DNS zone. Do not
-open public state access to accommodate a laptop. Azure Blob backend provides leases/
-locking; never use force-unlock while another writer may be active.
+1. Basic v2/East US availability, quota, names and current costs; WAF_v2 zones and
+   capacity (min 2/max 4), retention, protection services and budgets.
+   Older Standard v2/VM pricing is not a Basic v2 estimate.
+2. Required registrations outside Terraform: Microsoft.ApiManagement, Microsoft.Network,
+   Microsoft.Web, Microsoft.Sql, Microsoft.Storage, Microsoft.KeyVault,
+   Microsoft.CognitiveServices, Microsoft.Insights, Microsoft.OperationalInsights,
+   Microsoft.ManagedIdentity and Microsoft.Authorization. **No Microsoft.Compute/VM**
+   dependency for public dev; do not register anything as part of local validation.
+3. DEV Entra API/customer/admin registrations and service principals are exact-name,
+   owner-checked and single-tenant (`AzureADMyOrg`), with delegated `access_as_user`,
+   v2 tokens, requested SPA redirects and the `ids_admin` role. Their nonsecret IDs
+   are in ignored `infra\terraform\live-identity.json`. No secrets or directory-wide
+   permissions were created. Multi-tenant registration is a separate customer-
+   production requirement. Backend authorization still requires tenant AND user
+   database approval, not merely an Entra app-role assignment.
+4. API/customer/admin images are SHA-256 pinned from successful ACR remote builds.
+   Local Docker is missing; use approved `az acr build` against the maintained Basic
+   registry with explicit subscription and RG, uploading the current local source,
+   not a stale Git branch. `.dockerignore` excludes all `infra`, Terraform inputs/
+   state/plans, local credentials and dependencies from the build context.
+5. The public DNS label `aiflux-gateway-dev` and hostname
+   `aiflux-gateway-dev.eastus.cloudapp.azure.com` now resolve to the bootstrap IP
+   `134.33.136.180`. Let’s Encrypt staging and production HTTP-01 issuance both
+   succeeded. The production PFX is in private Key Vault secret `aiflux-dev-tls`;
+   Terraform uses its **versionless URI**. Application Gateway HTTPS remains pending
+   until its read permission and certificate refresh succeed. Never export PFX/private
+   keys or enable public Key Vault access as a workaround.
+6. **Automatic renewal is not installed.** The one-shot issuer has no durable scheduler.
+   App Gateway is configured with a versionless Key Vault reference, which supports
+   Azure-side refresh after a new secret version exists; this does not renew the
+   Let’s Encrypt certificate. Renewal still needs a reviewed scheduler, narrowly
+   scoped API write authorization, expiry alerting, and rehearsed recovery.
+7. SQL S0/database are in Australia East, with apps in East US and cross-region
+   latency accepted. ARM keeps SQL public access disabled; the exact operator rule
+   was rejected, so the 31 captured app outbound `/32`s remain dormant in the ignored
+   inputs (no `AllowAzureServices`). Reconcile only after the public interface is
+   approved/enabled. Local ODBC Driver 18/pyodbc are missing; schema migration,
+   contained-user grants and runtime token/readiness acceptance remain blocked.
+8. Native unified-model IaC/policies and origin/subscription/PII/safety/quotas/metadata
+   release evidence. Selected future model intentions (GlobalStandard Luna/Sol OpenAI
+   versions `2026-07-09`, Claude Sonnet 5.5 versions `1`/`2`, East US/Sweden) are
+   **not resource deployments, proven availability, or catalog entries**. Keep all
+   unadvertised until reproducible native implementation and per-model checks pass.
 
-There are no automatic deployment scripts. The following are **operator commands**,
-not work executed during this implementation:
+## Local authentication, state and deployment route
+
+Use an existing authorized Entra operator with Azure CLI; do not create identities
+or registrations merely to run Terraform. Explicitly pass the subscription to Azure
+commands and verify provider identity/subscription matches. Keep state/plan files on
+an **encrypted, access-controlled local disk**, excluded from source control and shared
+sync folders; Terraform local state is not itself encrypted. Back up securely and allow
+one writer only. No blob backend, state account, bootstrap or VM is mandatory today.
+
+`infra\operator` and `infra\state` remain **optional deferred private-design artifacts**,
+validated locally but not prerequisites and not consumed by this public root.
+Their private backend/OIDC examples do not configure the main local backend.
+Any later remote-state migration requires a separate reviewed auth/firewall/locking plan;
+do not toggle or migrate ownership blindly after resources exist.
+
+Use this reviewed operator route only after the recorded policy/entitlement
+blockers have approved resolutions. Do not repeatedly retry those failures:
 
 ```powershell
-# Local-only dependency/schema checks; init does not provision Azure.
-& infra\.tools\terraform.exe "-chdir=infra\terraform" init -backend=false -input=false
-& infra\.tools\terraform.exe "-chdir=infra\state" init -input=false
+# Check an existing Azure CLI login without changing shared subscription defaults.
+az account show --subscription 4d75ed7f-75ab-4db6-b1f3-263f240d1450
+$env:ARM_SUBSCRIPTION_ID = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+# Azure CLI auth is used; remove stale ARM OIDC/client-secret overrides from this
+# process only before proceeding. Do not print credentials.
+& infra\.tools\terraform.exe "-chdir=infra\terraform" init -input=false
 & infra\scripts\validate-local.ps1
 
-# After approved private-state bootstrap, configure this copied/edited ignored file.
-& infra\.tools\terraform.exe "-chdir=infra\terraform" init -reconfigure -backend-config=backend.hcl
-& infra\.tools\terraform.exe "-chdir=infra\terraform" validate
-& infra\.tools\terraform.exe "-chdir=infra\terraform" plan -var-file=environments\fdpo.tfvars -out=reviewed.tfplan
-# Inspect the entire plan and cost/config approval; apply only that reviewed plan.
-& infra\.tools\terraform.exe "-chdir=infra\terraform" apply reviewed.tfplan
+# Fill the ignored tfvars and review costs/inputs before approving a real plan.
+& infra\.tools\terraform.exe "-chdir=infra\terraform" plan -var-file=environments\fdpo.tfvars -var=deployment_stage=apim -out=apim.tfplan
+# Inspect and explicitly approve the complete plan, then:
+& infra\.tools\terraform.exe "-chdir=infra\terraform" apply apim.tfplan
+
+# With existing Entra/SQL/registry/images/operator_ip inputs:
+& infra\.tools\terraform.exe "-chdir=infra\terraform" plan -var-file=environments\fdpo.tfvars -var=deployment_stage=platform -out=platform.tfplan
+& infra\.tools\terraform.exe "-chdir=infra\terraform" apply platform.tfplan
+& infra\.tools\terraform.exe "-chdir=infra\terraform" output sql_required_outbound_ipv4s
+# Hybrid output is empty: verify private DNS/TCP, then SQL grants/migrations
+# through the approved private execution route, API readiness, auth and origin checks.
+# Only legacy public-data mode needs exact sql_firewall_ipv4s and a second plan.
+# After certificate/DNS/WAF/backend preflight and explicit approval:
+# Hybrid additionally needs private_sql_connectivity_accepted=true with live evidence.
+& infra\.tools\terraform.exe "-chdir=infra\terraform" plan -var-file=environments\fdpo.tfvars -var=deployment_stage=public-edge -var=public_edge_live_gates_approved=true -out=public-edge.tfplan
+& infra\.tools\terraform.exe "-chdir=infra\terraform" apply public-edge.tfplan
 ```
 
-Backend config template `backend.hcl.example` uses OIDC and Azure AD authorization.
-Set `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and the runner's supported OIDC
-token environment outside version control; do not provide account keys, SAS, client secrets
-or API keys. On interactive approved operators, use supported Azure CLI/Azure AD auth
-instead of enabling a public backend or embedding credentials.
+The former private self-hosted deployment workflow is **disabled**, with no OIDC
+deployment permission, and references this local route. CI continues validation only.
+Future GitHub-hosted deployment must have reviewed ephemeral runner `/32` allowlisting
+for App Service/SCM and guaranteed cleanup on failure/cancellation; private data work
+still requires separately approved VNet execution, not public SQL allowlisting. Never grant
+all Azure services or broad GitHub ranges. Build immutable images using the existing
+Dockerfiles and deployment identity; no registry keys, publish passwords or credentials.
 
-Local `terraform test` uses mock providers for **every Azure provider** and `command=plan`;
-it makes no Azure API calls. It checks graph coherence, private/disabled posture and
-rejection of missing cost approval: two tests for the deployment root and two for the
-state root passed. Twelve gateway contracts and the disabled-bundle check also passed.
-The release check returned the expected blocking exit 2. `terraform validate` checks provider schemas, not
-remote Azure acceptance, rollout, region, naming availability, RBAC propagation or quotas.
-AzAPI preflight/live plans must be reviewed on the real approved target later.
+## Runtime integration and acceptance
 
-If APIM automatically materializes `azuremonitor`, explicitly import the existing logger
-at `.../service/<name>/loggers/azuremonitor` to `azapi_resource.monitor_logger` before the
-reviewed apply. Never replace it with a shell PUT or `schema_validation_enabled=false`
-to hide ownership problems. RG remains a data source and must not be imported.
+Routes preserve paths: `/v1[/*]` to APIM (denied), `/api[/*]`, `/health`, `/ready` to API,
+`/admin[/*]` to the admin portal, and everything else to the customer portal.
+Only `public-edge` emits the public gateway URL; the earlier public resource hostnames
+are not a released portal/inference URL.
 
-## Application/Function integration
+`control_plane_settings` supplies database/Entra/bootstrap/APIM/Product/workspace/catalog
+IDs with `AIFLUX_CATALOG_CONFIGURED=false`. `AZURE_CLIENT_ID` selects per-host MI.
+Portal Entra settings are build-time public values; use relative `/api` and the final
+edge `/v1`, no embedded keys. API images use `services\control-plane\Dockerfile` with
+repository-root context.
 
-Public path map preserves paths:
+SQL URL is `mssql+pyodbc://@<server>:1433/aiflux` with Driver 18, `Encrypt=yes` and
+`TrustServerCertificate=no`, without passwords. Runtime obtains the SQL access token.
+From an approved private operator execution environment in hybrid mode (the
+App Service operator IP allowlist does not provide private SQL connectivity),
+as the existing Entra SQL administrator, run
+`alembic -c services\control-plane\alembic.ini upgrade head` then
+`infra\sql\bootstrap-identities.sql` with SQLCMD managed-identity **client IDs** from
+the live UAMI `clientId` fields (`az identity show`); the Terraform
+`identity_principal_ids` output is for ARM/RBAC, **not** these SQL SIDs.
+Runtime API gets schema DML, not DDL/db_owner; ingestion gets
+scoped usage/safety/watermark DML. Graph Directory Readers is not required by the
+SID-based bootstrap. Run `aiflux-bootstrap` with the reviewed database URL, audience,
+home tenant and bootstrap object ID; it creates only the configured home-tenant
+IDS administrator membership and refuses conflicting or disabled membership.
+Verify the database's `alembic_version` is `0001`, external-user SIDs match the
+verified principal object IDs, and actual permissions/role memberships contain no
+runtime DDL or `db_owner`. Verify the home organization/member rows and an
+authorized `/api/me` call; merely possessing an Entra token does not approve a user.
+Validate runtime SQL login and `/ready` 200; `/health` is liveness,
+`/api/models` separately checks catalog, and none proves inference readiness.
 
-- `/v1` and `/v1/*`: APIM only, unconditionally disabled.
-- `/api`, `/api/*`, `/health`, `/ready`: control plane (Python port `8000`).
-- `/admin` and `/admin/*`: admin portal, built with base `/admin/`.
-- Everything else: customer portal, built for `/`.
+Function MI settings include keyless Blob/Queue/Table endpoints and the shared runtime
+contract. Package ingestion code/dependencies/catalog and ODBC Driver 18 with an
+authenticated immutable package mechanism, no SAS/account key. Keep the host disabled
+until package execution, storage/SQL permissions, metadata/watermark semantics and native
+release gates are reviewed. Resource-scoped Monitor, AI, certificate and ACR roles remain.
+API's APIM custom role grants team subscription operations only, not policy/service write.
 
-Front Door's planned base URL is output as `gateway_url` with `/v1`; its route is disabled.
-Do not supply the private `*.azure-api.net` address to clients. Health probes use liveness
-`/health`; `/ready` is a separate identity/database-config and SQL connectivity gate.
-Catalog readiness is enforced by `/api/models`, not `/ready`. Liveness and readiness
-are not declarations of inference capability or an approved user membership.
+Before release, test from the operator and an untrusted public client: Entra/membership
+denials, App Service/SCM restrictions, SQL rejected addresses, AI/vault/storage unauthenticated
+denials, WAF body limits/attack handling, TLS/SNI/certificate rotation, backend 200 probes,
+request buffering on and SSE response buffering off. Direct APIM must still deny.
+Audit no prompts/completions/keys/entity mappings in normal/error diagnostics.
+Run all native origin/inspection/subscription/quotas/telemetry gates before any inference
+change. Restore unconditional deny first on rollback; never use an uninspected proxy.
 
-The API Docker build uses repository context and `services\control-plane\Dockerfile`;
-Terraform only hosts reviewed images and does not build/push them. Portal auth variables
-are **build-time** public configuration; Terraform does not mutate static compiled JS.
-Use relative `/api` and the public `/v1` URL, real Entra registrations, no embedded keys.
+## Local validation and references
 
-API settings emitted by `control_plane_settings`:
-`AIFLUX_DATABASE_URL`, `AIFLUX_ENTRA_AUDIENCE`, `AIFLUX_ENTRA_CLIENT_ID`,
-`AIFLUX_HOME_TENANT_ID`, `AIFLUX_BOOTSTRAP_OBJECT_ID`, `AIFLUX_GATEWAY_URL`,
-`AIFLUX_APIM_RESOURCE_ID`, `AIFLUX_APIM_PRODUCT_ID`, `AIFLUX_LOG_WORKSPACE_ID`,
-`AIFLUX_CATALOG_PATH`, `AIFLUX_CATALOG_CONFIGURED=false`, plus production environment.
-`AZURE_CLIENT_ID` selects each host's user-assigned managed identity.
+### TLS bootstrap without a circular release gate
 
-The SQLAlchemy URL is `mssql+pyodbc://@<server>:1433/aiflux` with ODBC Driver 18,
-Encrypt=yes and TrustServerCertificate=no, **without SQL credentials**. Application code
-acquires `https://database.windows.net/.default` and supplies its driver access token.
-ODBC Driver 18 must be packaged in the application/Function Linux artifact.
+`edge-bootstrap` preserves the complete authenticated platform and adds a Standard
+static regional DNS IP, WAFv2, and **HTTP-01 only** listener. It needs no certificate
+or live-release attestation. WAF blocks non-challenge paths; the default origin is
+an actual fixed 403 API route, not a fake health success. No portal/APIM backend is
+configured. The API challenge endpoint defaults off and serves only bounded,
+strictly named public ACME key authorizations; arbitrary files and symlinks are denied.
 
-Function settings use the same IDs/database/workspace/catalog contract but
-`AIFLUX_CATALOG_PATH=/home/site/wwwroot/gateway/catalog/models.json`.
-Package the catalog and `aiflux` Python package with `services\usage-ingestion\function_app.py`,
-`host.json` and dependencies. Its timer imports `aiflux.ingestion.main`.
-For immutable package deployment, use a reviewed private blob/package with managed identity,
-not a SAS/account key. Do not switch on the disabled host until code packaging, DNS,
-SQL grants, ingestion watermarks/bounds and metadata schemas pass. Enabling it requires
-a reviewed Terraform change, not an unsupported automatic deployment toggle.
+`edge-candidate` adds a real versionless Key Vault PFX secret reference and TLS
+20220101S. Portal/control-plane routes are restricted to the reviewed operator IP
+until `public-edge` live acceptance. HTTP remains challenge-only with a deny default
+in every stage. `/v1` is unconditionally blocked at WAF and the origin: this is **403**,
+not inference readiness or an APIM 503 acceptance claim. Response buffering stays
+off, request buffering on, backend TLS uses default-hostname SNI, and v2 backend
+timeouts are integer 1–240 seconds. WAF scrubs all supported header/cookie/query/form/
+JSON fields and IP; matching body content types remain required by Azure.
 
-## Runtime RBAC and SQL bootstrap
+`infra\scripts\issue-edge-tls.py` runs a one-shot issuer **inside the private-integrated
+API container**, staging before production. Staging validated the HTTP-01 challenge
+without writing Key Vault. Production uploaded the base64 PFX in memory through the
+API managed identity to only `aiflux-dev-tls`, using a temporary Secrets Officer
+assignment at that exact secret scope; startup and the temporary assignment were
+restored afterward. The App Gateway managed identity uses read-only Key Vault Secrets
+User at the vault scope, which is required for Application Gateway's Key Vault RBAC
+check; it has no administrative role. Private account and certificate keys never touch
+disk, Terraform, command arguments, or SCM logs. Only public HTTP-01 files touch
+`/home`; they are deleted after validation. Keep operator recovery evidence protected
+and check its `restored` flag after any failure.
 
-The API receives a custom role assigned **only on this APIM**:
-service read, product read, subscription read/write, listSecrets/action,
-regeneratePrimaryKey/action, regenerateSecondaryKey/action. It cannot change service,
-policies, APIs, backends, or model deployments. Runtime team subscription secrets live in
-APIM/control-plane responses only, not Terraform, SQL or app settings.
+**Renewal is not installed by this one-shot script.** A reviewed, monitored scheduler,
+secret-scoped write authorization, distributed execution lock, expiry alert, and
+failure recovery are still required before claiming automatic renewal or public release.
+Do not permanently grant vault-wide certificate/secret administration to the API.
 
-API/ingestion get Log Analytics Reader on this workspace. Telemetry writers get Monitoring
-Metrics Publisher on this App Insights only. Gateway gets Cognitive Services User on each
-protection account and Secrets User on the gateway vault; edge gets Secrets User on the
-certificate vault. Apps get AcrPull on the supplied ACR. Ingestion storage data roles apply
-only to its dedicated host storage, whose shared-key auth is disabled.
+On the initial 2026-10-11 dev attempt, both Terraform and explicit Azure CLI Standard/Static/
+IPv4 public-IP creation were rejected with
+`SubscriptionNotRegisteredForFeature: Microsoft.Network/AllowBringYourOwnPublicIpAddress`;
+read-only feature inspection returned `NotRegistered`. No feature registration,
+policy exemption, API-version workaround, or alternate public-IP scheme was attempted.
+Consequently DNS/HTTP-01, CA eligibility orders, certificates, HTTPS and public portal
+acceptance remain unverified. A CAA hierarchy read found no restricting `issue`
+record, but that does not prove CA issuance eligibility. The API image/challenge
+route and free edge identity/NSG were created; Application Gateway was not created
+by that initial attempt.
 
-Azure RBAC does not create SQL contained users. As the configured Entra SQL administrator,
-run migrations first using a **separate operator identity**, then execute
-`infra\sql\bootstrap-identities.sql` on the private database using SQLCMD variables
-`API_PRINCIPAL_ID`/`INGESTION_PRINCIPAL_ID` from `identity_principal_ids`.
-These are principal **object IDs**, not client IDs. The script uses SID-based external
-users to avoid granting SQL server Directory Readers/Graph privileges; it rejects an
-existing mismatched SID. API has schema DML but no DDL; ingestion has read access to
-ownership/prices and DML only to usage/safety/watermark tables. Validate schema/grants
-against actual migrations; do not grant db_owner to runtime identities.
+After the user-approved feature registration, both feature and Microsoft.Network provider
+reported `Registered`; no provider refresh or policy exception was needed. The saved,
+refreshed `edge-bootstrap-registered.tfplan` had zero destroys and applied **7 adds,
+4 in-place changes, 0 destroys**. The WAF_v2 gateway is Running with only the HTTP
+challenge listener at `134.33.136.180`. Its API and deny backend probes are Healthy.
+Public synthetic challenge content returned 200/no-store and was deleted; missing
+tokens return 404, while `/`, `/admin/`, `/api/me`, `/health`, `/ready` and `/v1/models`
+return 403 over HTTP. Direct operator API checks remain health/ready 200 and anonymous
+`/api/me` 401; direct APIM remains 503.
 
-## Post-deployment checks and rollback (not yet run)
+The default `python-requests` client identifier receives a WAF 403, while the
+application-specific `AIFLUX-TLS/1` identifier reaches the exact challenge route.
+WAF Prevention/managed rules were not relaxed. Staging validation and production
+issuance then completed for `aiflux-gateway-dev.eastus.cloudapp.azure.com`; the
+production certificate metadata reports Let’s Encrypt and expiry `2027-01-09T09:15:36Z`.
+The one-shot runner reported private-key disk writes as false and restoration as
+successful. No certificate or secret value was read back or printed.
 
-1. Approve **only** the Front Door profile's pending private endpoint connection on the
-   AppGW `private` frontend; confirm approved state and certificate/name/health/DNS.
-2. Confirm APIM private VIP and internal DNS; test public and untrusted private-client
-   bypass denial, SQL/AI/vault/storage public disablement and origin access.
-3. Apply migrations/grants and verify API `/ready` remains accurately gated.
-4. Audit diagnostics: no prompts/completions/body/entity mappings/keys in normal/error paths.
-   APIM masks known credential query names, but query-key auth must be rejected by the
-   future native contract; do not assume arbitrary URLs are sanitized.
-   WAF/access diagnostics remain off until an independent safe projection is reviewed.
-5. Run every native release gate; only after reviewed code/evidence enable the edge route,
-   Function host and native API/Product in separate reviewed changes.
+The first HTTPS candidate update failed `ApplicationGatewayKeyVaultSecretAccessDenied`
+because its Key Vault Secrets User role was scoped only to the secret. Microsoft’s
+Application Gateway troubleshooting guidance requires this reader role at the vault
+resource or higher. The candidate configuration now uses vault-scoped read-only access
+for the App Gateway identity; the API writer remains restricted to the individual
+secret and its temporary assignment has been removed. After RBAC propagation, a
+versionless-URI refresh was attempted but returned the same access-denied error. The
+private endpoint is Approved, its DNS zone is linked to the gateway VNet, and the
+vault remains public-network-disabled; trusted-service bypass and firewall weakening
+were not enabled. The remaining Key Vault access failure is unresolved and needs
+network/service diagnostics before another deployment attempt. Port 443 is not serving
+HTTPS; the listener certificate reports `Failed`. HTTP non-challenge routes remain
+WAF-denied, direct API health/readiness return 200, and anonymous API access returns
+401. Inference stays disabled and the `public-edge` live-release gate remains false.
+Ignored `.tls-edge` evidence contains only sanitized public certificate metadata and
+restoration status.
 
-To stop a launched service, republish the unconditional denial first and disable
-publication/routes/ingestion as appropriate. Never rollback to an uninspected pass-through.
-Protect SQL/state from destroy and retain ownership/usage history. Terraform does not
-manage or delete runtime APIM team subscriptions; reconcile them separately.
+Azure stamped the new IP with immutable `FirstPartyUsage=/Unprivileged` IP tags.
+Terraform ignores Azure-owned `ip_tags` instead of removing them and replacing the
+reserved address. No Azure tag or policy was changed. The last bootstrap plan had zero
+destroys; the reader-role correction replaced one narrower read-only role assignment
+with the documented vault-scoped reader. All five private endpoints remain Succeeded;
+Key Vault/SQL/storage public access remains Disabled, storage shared keys remain off,
+and APIM remains BasicV2.
+Azure stamped the new IP with immutable `FirstPartyUsage=/Unprivileged` IP tags.
+Terraform ignores Azure-owned `ip_tags` instead of removing them and replacing the
+reserved address. No Azure tag or policy was changed. The final saved
+`edge-bootstrap-post-apply-safe.tfplan` contains only the four previously observed
+in-place App Service/Function drift updates and **zero destroys**; it was not applied.
+All five private endpoints remain Succeeded; Key Vault/SQL/storage public access
+remains Disabled, storage shared keys remain off, and APIM remains BasicV2.
 
-## References
+Governance already attached an empty NSG to the AppGW subnet. Set
+`app_gateway_existing_nsg_name` to preserve that NSG, import its existing subnet
+association, and add only the named AIFLUX ingress rules. Never replace a
+governance-owned association or erase unrelated policy rules.
 
-- [Premium v2 private injection and subnet requirements](https://learn.microsoft.com/azure/api-management/inject-vnet-v2)
-- [Front Door private App Gateway origin and approval](https://learn.microsoft.com/azure/frontdoor/how-to-enable-private-link-application-gateway)
-- [App Gateway private-only network isolation](https://learn.microsoft.com/azure/application-gateway/application-gateway-private-deployment)
-- [Front Door origin ARM contract](https://learn.microsoft.com/azure/templates/microsoft.cdn/2025-04-15/profiles/origingroups/origins)
-- [Native LLM diagnostic ARM contract](https://learn.microsoft.com/azure/templates/microsoft.apimanagement/2025-09-01-preview/service/diagnostics)
-- [AzureRM provider documentation](https://registry.terraform.io/providers/hashicorp/azurerm/5.9.0/docs)
-- [Terraform AI gateway landing-zone reference](https://github.com/Azure/terraform-ai-gateway-landing-zone)
+`validate-local.ps1` checks formatting, provider schemas and mocked **plan** tests for
+all roots, plus standard-library gateway contracts. It creates no Azure resources.
+Main-root tests cover public Basic v2/no APIM integration, legacy public data/firewall
+behavior, hybrid public-disabled data services, exactly five endpoints/correct DNS,
+API/Function-only integration, SQL Proxy/NSG ports, origin restrictions and independent
+disabled/approval gates.
+Local success is not Azure availability, naming, connectivity, RBAC or native proof.
+The bundle release check must continue to block release.
+
+- [APIM v2 tiers and supported networking](https://learn.microsoft.com/azure/api-management/v2-service-tiers-overview)
+- [APIM addresses and nondeterministic v2 IPs](https://learn.microsoft.com/azure/api-management/api-management-howto-ip-addresses)
+- [App Service access restrictions/service endpoints](https://learn.microsoft.com/azure/app-service/app-service-ip-restrictions)
+- [SQL firewall rules](https://learn.microsoft.com/azure/azure-sql/database/firewall-configure)
+- [SQL private endpoints and Proxy/Redirect ports](https://learn.microsoft.com/azure/azure-sql/database/private-endpoint-overview)
+- [Private endpoint regions and target subresources](https://learn.microsoft.com/azure/private-link/private-endpoint-overview)
+- [Dedicated Functions storage considerations](https://learn.microsoft.com/azure/azure-functions/storage-considerations?pivots=dedicated-plan)
+- [Application Gateway WAF](https://learn.microsoft.com/azure/web-application-firewall/ag/ag-overview)
+- [Application Gateway Key Vault certificates](https://learn.microsoft.com/azure/application-gateway/key-vault-certs)
+- [AzureRM 5.9 provider](https://registry.terraform.io/providers/hashicorp/azurerm/5.9.0/docs)

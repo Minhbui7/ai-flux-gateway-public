@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     log_workspace_id: str = ""
     catalog_path: Path = Path("gateway/catalog/models.json")
     catalog_configured: bool = False
+    acme_challenge_enabled: bool = False
+    acme_challenge_directory: Path = Path("/home/aiflux-acme-challenges")
     cors_origins: list[str] = []
     ingestion_overlap_minutes: int = 60
     ingestion_initial_days: int = 1
