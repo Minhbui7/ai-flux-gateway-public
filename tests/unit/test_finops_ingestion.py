@@ -136,6 +136,23 @@ def test_safety_trace_allowlist():
     )
 
 
+def test_live_native_trace_metadata_json_string_is_supported():
+    assert extract_safety(
+        [
+            {
+                "source": "aiflux",
+                "metadata": '{"category":"ContentSafety","action":"blocked"}',
+            }
+        ]
+    ) == [("ContentSafety", "blocked")]
+
+
+@pytest.mark.parametrize("metadata", ['{"category":', '["ContentSafety"]'])
+def test_invalid_native_safety_metadata_is_not_silently_dropped(metadata):
+    with pytest.raises(ValueError):
+        extract_safety([{"source": "aiflux", "metadata": metadata}])
+
+
 def test_usage_query_includes_the_deployed_chat_operation():
     query = (
         Path(__file__).resolve().parents[2]

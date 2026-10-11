@@ -37,6 +37,8 @@ requests before 429 in that burst: observed overshoot was one, not an exact rate
 RPM and TPM use separate subscription/model counter namespaces. Required service/runtime
 failures remain 503; confirmed native safety violations return 403 and emit only a generic
 `ContentSafety` blocked-event trace, never raw error messages or inferred harm categories.
+The live native trace serializes its metadata as a JSON string; ingestion accepts that
+documented observation as well as object metadata, and rejects malformed metadata explicitly.
 These checks are not provider-side PII capture, full adversarial acceptance, regional
 failover proof or production release evidence.
 
@@ -184,6 +186,13 @@ the Function stays disabled. Do not time-join unrelated requests or fabricate us
 WAF/access diagnostic
 sinks are deliberately not enabled because matched values/URLs can contain prompts or
 credentials. Do not enable allLogs, raw trace/debug, or application request/response logging.
+
+Existing app logging/content-share hardening was applied without enabling the ingestion
+Function or changing SQL/TLS settings. API health/readiness still return 200 and anonymous
+control access returns 401. A subsequent full refresh still proposes app logging,
+Function content-share, policy serialization and SQL vulnerability-assessment changes;
+this is not a no-drift deployment. Do not blanket-apply those changes or disable an
+existing SQL vulnerability assessment.
 
 ## Validation and reviewed artifact handoff
 

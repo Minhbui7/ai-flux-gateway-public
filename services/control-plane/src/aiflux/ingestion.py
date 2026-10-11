@@ -53,6 +53,8 @@ def extract_safety(records: Any) -> list[tuple[str, str]]:
         if not isinstance(record, dict) or record.get("source") != "aiflux":
             continue
         metadata = record.get("metadata", {})
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
         if not isinstance(metadata, dict):
             raise ValueError("AIFLUX safety trace metadata is invalid")
         category, action = metadata.get("category"), metadata.get("action")
