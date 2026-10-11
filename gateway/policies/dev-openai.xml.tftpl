@@ -104,6 +104,10 @@
             <category name="Violence" threshold="${safety_threshold}" />
           </categories>
         </llm-content-safety>
+        <set-variable name="aiflux-redacted-documents" value="[]" />
+%{ for batch in range(5) ~}
+        <choose>
+          <when condition='@(((JArray)JObject.Parse((string)context.Variables["aiflux-request-json"])["messages"]).Count > ${batch * 5})'>
         <send-request mode="new" response-variable-name="aiflux-pii" timeout="10" ignore-error="false">
           <set-url>${language_endpoint}/language/:analyze-text?api-version=2026-05-01</set-url>
           <set-method>POST</set-method>
@@ -112,7 +116,7 @@
             var request = JObject.Parse((string)context.Variables["aiflux-request-json"]);
             var messages = (JArray)request["messages"];
             var documents = new JArray();
-            for (var i = 0; i < messages.Count; i++) {
+            for (var i = ${batch * 5}; i < Math.Min(${batch * 5 + 5}, messages.Count); i++) {
               documents.Add(new JObject {
                 ["id"] = i.ToString(),
                 ["language"] = "en",
@@ -131,21 +135,19 @@
           }]]></set-body>
           <authentication-managed-identity resource="https://cognitiveservices.azure.com/" client-id="${gateway_identity_client}" ignore-error="false" />
         </send-request>
-        <set-header name="x-aiflux-pii-response" exists-action="override">
-          <value><![CDATA[@(((IResponse)context.Variables["aiflux-pii"]).Body.As<string>(preserveContent: true))]]></value>
-        </set-header>
+        <set-variable name="aiflux-pii-response-json" value='@(((IResponse)context.Variables["aiflux-pii"]).Body.As&lt;string&gt;(preserveContent: true))' />
         <choose>
           <when condition='@{
             var response = (IResponse)context.Variables["aiflux-pii"];
             if (response == null || response.StatusCode != 200) { return true; }
-            var body = JObject.Parse(context.Request.Headers.GetValueOrDefault("x-aiflux-pii-response", ""));
+            var body = JObject.Parse((string)context.Variables["aiflux-pii-response-json"]);
             if (body["kind"] == null || (string)body["kind"] != "PiiEntityRecognitionResults") { return true; }
             var results = body["results"] as JObject;
             if (results == null || results["errors"] == null || ((JArray)results["errors"]).Count != 0) { return true; }
             var documents = results["documents"] as JArray;
             var messages = (JArray)JObject.Parse((string)context.Variables["aiflux-request-json"])["messages"];
-            if (documents == null || documents.Count != messages.Count) { return true; }
-            var index = 0;
+            if (documents == null || documents.Count != Math.Min(5, messages.Count - ${batch * 5})) { return true; }
+            var index = ${batch * 5};
             foreach (var item in documents) {
               var document = item as JObject;
               if (document == null || (string)document["id"] != index.ToString() || document["redactedText"] == null || document["redactedText"].Type != JTokenType.String) { return true; }
@@ -164,11 +166,24 @@
             </return-response>
           </when>
         </choose>
+        <set-variable name="aiflux-redacted-documents" value='@{
+          var accumulated = JArray.Parse((string)context.Variables["aiflux-redacted-documents"]);
+          var pii = JObject.Parse((string)context.Variables["aiflux-pii-response-json"]);
+          foreach (var document in (JArray)pii["results"]["documents"]) {
+            accumulated.Add(new JObject {
+              ["id"] = (string)document["id"],
+              ["redactedText"] = (string)document["redactedText"]
+            });
+          }
+          return accumulated.ToString();
+        }' />
+          </when>
+        </choose>
+%{ endfor ~}
         <set-body><![CDATA[@{
           var request = JObject.Parse((string)context.Variables["aiflux-request-json"]);
           var messages = (JArray)request["messages"];
-          var pii = JObject.Parse(context.Request.Headers.GetValueOrDefault("x-aiflux-pii-response", ""));
-          var documents = (JArray)pii["results"]["documents"];
+          var documents = JArray.Parse((string)context.Variables["aiflux-redacted-documents"]);
           for (var i = 0; i < messages.Count; i++) {
             ((JObject)messages[i])["content"] = (string)documents[i]["redactedText"];
           }
@@ -208,10 +223,40 @@
     </choose>
   </inbound>
   <backend>
-    <forward-request timeout="90" />
+    <retry condition='@(context.Response != null &amp;&amp; (context.Response.StatusCode == 500 || context.Response.StatusCode == 502 || context.Response.StatusCode == 503 || context.Response.StatusCode == 504))' count="1" interval="1" first-fast-retry="false">
+      <set-variable name="aiflux-backend-attempt" value='@(context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-backend-attempt", 0) + 1)' />
+      <choose>
+        <when condition='@((int)context.Variables["aiflux-backend-attempt"] > 1)'>
+          <trace source="aiflux" severity="information">
+            <message>Retrying a buffered model request after a transient backend failure.</message>
+            <metadata name="retry" value="transient_backend" />
+            <metadata name="previous_status" value='@(context.Response.StatusCode.ToString())' />
+          </trace>
+        </when>
+      </choose>
+      <choose>
+        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-luna")'>
+          <set-backend-service backend-id="dev-gpt-5-6-luna-pool" />
+        </when>
+        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-sol")'>
+          <set-backend-service backend-id="dev-gpt-5-6-sol-pool" />
+        </when>
+      </choose>
+      <forward-request timeout="45" buffer-request-body="true" buffer-response="true" fail-on-error-status-code="false" />
+    </retry>
   </backend>
   <outbound>
     <base />
+    <choose>
+      <when condition='@(context.Response.StatusCode >= 500)'>
+        <return-response>
+          <set-status code="503" reason="Model backend unavailable" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"Model backends are temporarily unavailable after the bounded retry budget.","type":"service_unavailable","param":null,"code":"model_backend_unavailable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
     <choose>
       <when condition='@(context.Request.Method == "POST")'>
         <llm-content-safety backend-id="${safety_backend_id}" window-size="1000" window-overlap-size="100">

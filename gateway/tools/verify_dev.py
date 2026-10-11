@@ -53,6 +53,7 @@ def checks(
     smoke: bool = False,
     probe_bearer: bool = False,
     limits: bool = False,
+    pii_batches: bool = False,
 ) -> dict:
     results = []
 
@@ -69,6 +70,29 @@ def checks(
             item["error"] = "network_or_timeout"
         results.append(item)
         return response
+
+    def completion(name: str, body: dict) -> None:
+        response = run(name, "/chat/completions", 200, key=key, body=body)
+        choices = response.get("choices")
+        usage = response.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        first = choices[0] if isinstance(choices, list) and choices else None
+        message = first.get("message") if isinstance(first, dict) else None
+        results[-1]["passed"] &= (
+            isinstance(message, dict)
+            and isinstance(message.get("content"), str)
+            and all(
+                type(usage.get(k)) is int and usage[k] >= 0
+                for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+            )
+            and usage.get("total_tokens") == usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+            and usage.get("completion_tokens", 0) <= 64
+        )
+        results[-1]["usage"] = {
+            k: usage[k]
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if type(usage.get(k)) is int
+        }
 
     run("missing_key", "/models", 401)
     run("invalid_key", "/models", 401, key="invalid-acceptance-fixture")
@@ -123,34 +147,35 @@ def checks(
     )
     if smoke:
         for model in ("gpt-5.6-luna", "gpt-5.6-sol"):
-            response = run(
+            completion(
                 model + "_completion",
-                "/chat/completions",
-                200,
-                key=key,
-                body={**valid, "model": model, "max_completion_tokens": 64},
+                {**valid, "model": model, "max_completion_tokens": 64},
             )
-            choices = response.get("choices")
-            usage = response.get("usage")
-            usage = usage if isinstance(usage, dict) else {}
-            first = choices[0] if isinstance(choices, list) and choices else None
-            message = first.get("message") if isinstance(first, dict) else None
-            results[-1]["passed"] &= (
-                isinstance(message, dict)
-                and isinstance(message.get("content"), str)
-                and all(
-                    type(usage.get(k)) is int and usage[k] >= 0
-                    for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-                )
-                and usage.get("total_tokens")
-                == usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
-                and usage.get("completion_tokens", 0) <= 64
+    if pii_batches:
+        time.sleep(61)
+        for count, model in ((5, "gpt-5.6-luna"), (6, "gpt-5.6-sol"), (25, "gpt-5.6-luna")):
+            roles = ["system", "developer"] + [
+                "user" if index % 2 == 0 else "assistant" for index in range(count - 2)
+            ]
+            roles[-1] = "user"
+            completion(
+                f"pii_{count}_message_batch",
+                {
+                    **valid,
+                    "model": model,
+                    "max_completion_tokens": 64,
+                    "messages": [
+                        {
+                            "role": role,
+                            "content": "Synthetic contact: test.person@example.com. "
+                            "Unicode: \U0001f600 e\u0301. Reply OK.",
+                        }
+                        for role in roles
+                    ],
+                },
             )
-            results[-1]["usage"] = {
-                k: usage[k]
-                for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-                if type(usage.get(k)) is int
-            }
+            results[-1]["message_count"] = count
+            results[-1]["roles"] = sorted(set(roles))
     if limits:
         # Clear the known 60-second dev RPM window before bounded counter checks.
         time.sleep(61)
@@ -247,6 +272,11 @@ def main() -> None:
         action="store_true",
         help="Wait one minute, then make bounded RPM/isolation and Prompt Shields checks.",
     )
+    parser.add_argument(
+        "--pii-batches",
+        action="store_true",
+        help="Wait one minute and test 5/6/25-message synthetic role/Unicode batches; not provider capture.",
+    )
     args = parser.parse_args()
     token = json.loads(
         subprocess.check_output(
@@ -278,7 +308,14 @@ def main() -> None:
     base = f"https://{args.apim}.azure-api.net/dev/v1"
     if urlsplit(base).hostname != f"{args.apim}.azure-api.net":
         raise ValueError("APIM name must be a hostname label")
-    report = checks(base, key, smoke=args.smoke, probe_bearer=args.probe_bearer, limits=args.limits)
+    report = checks(
+        base,
+        key,
+        smoke=args.smoke,
+        probe_bearer=args.probe_bearer,
+        limits=args.limits,
+        pii_batches=args.pii_batches,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

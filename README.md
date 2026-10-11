@@ -59,6 +59,9 @@ Luna/Sol inference, and a synthetic Prompt Shields rejection. RPM/TPM counters a
 Explicit metadata-only LLM diagnostics now correlate both fresh model completions with
 subscription-owned gateway logs; body/message absence was checked after activation.
 This is not full PII/failover/portal/FinOps acceptance or native bearer/Anthropic support.
+The synchronous PII five-document limit is now respected while preserving the 25-message
+API bound; 5/6/25-message role/Unicode cases pass. Buffered transient model 5xx gets one
+bounded retry; unknown usage from prior attempts remains incomplete in FinOps.
 
 **Current priority:** complete model routing, portal integration, unified API and
 live FinOps before fixing Application Gateway HTTPS. Its trusted certificate is

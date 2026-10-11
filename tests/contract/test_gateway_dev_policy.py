@@ -55,8 +55,21 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertIn('content_format = "openapi+json"', self.apim_source)
         self.assertIn('service_url           = "https://aiflux-disabled.invalid"', self.apim_source)
         backend = self.dev_policy.find("./backend")
-        self.assertEqual([child.tag for child in backend], ["forward-request"])
-        self.assertEqual(backend.find("forward-request").get("timeout"), "90")
+        self.assertEqual([child.tag for child in backend], ["retry"])
+        self.assertEqual(backend.find("./retry/forward-request").get("timeout"), "45")
+
+    def test_only_buffered_transient_model_errors_are_retried_once(self):
+        retry = self.dev_policy.find("./backend/retry")
+        self.assertEqual(retry.get("count"), "1")
+        self.assertEqual(retry.get("interval"), "1")
+        self.assertNotIn("429", retry.get("condition"))
+        self.assertNotIn("401", retry.get("condition"))
+        self.assertNotIn("403", retry.get("condition"))
+        self.assertEqual(retry.find("forward-request").get("buffer-request-body"), "true")
+        self.assertEqual(retry.find("forward-request").get("buffer-response"), "true")
+        self.assertEqual(len(retry.findall("./choose/when/set-backend-service")), 2)
+        failed = self.dev_policy.find("./outbound/choose/when")
+        self.assertEqual(failed.find("./return-response/set-status").get("code"), "503")
 
     def test_original_redacted_and_completion_safety_are_present(self):
         safety_policies = self.dev_policy.findall(".//llm-content-safety")
@@ -82,6 +95,19 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         deleted = {header.get("name") for header in self.dev_policy.findall(".//set-header[@exists-action='delete']")}
         self.assertTrue({"Authorization", "api-key", "Ocp-Apim-Subscription-Key"} <= deleted)
         self.assertIn("https://cognitiveservices.azure.com/", self.dev_source)
+
+    def test_pii_batches_follow_synchronous_document_limit_and_preserve_global_ids(self):
+        self.assertIn("%{ for batch in range(5)", self.dev_source)
+        self.assertIn("Math.Min(${batch * 5 + 5}, messages.Count)", self.dev_source)
+        self.assertIn("Math.Min(5, messages.Count - ${batch * 5})", self.dev_source)
+        self.assertIn('var index = ${batch * 5};', self.dev_source)
+        self.assertIn('document["id"] != index.ToString()', self.dev_source)
+        self.assertIn('JArray.Parse((string)context.Variables["aiflux-redacted-documents"])', self.dev_source)
+        self.assertNotIn('Headers.GetValueOrDefault("x-aiflux-pii-response"', self.dev_source)
+        self.assertEqual(
+            self.openapi["paths"]["/chat/completions"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["properties"]["messages"]["maxItems"], 25,
+        )
 
     def test_non_dev_apis_remain_globally_denied(self):
         gate = self.global_gate.find("./inbound/choose/when")

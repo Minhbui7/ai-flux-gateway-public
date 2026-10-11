@@ -41,14 +41,14 @@ def record_id(resource: str, correlation_id: str) -> str:
     return hashlib.sha256(f"{resource.lower()}:{correlation_id}".encode()).hexdigest()
 
 
-def extract_safety(records: Any) -> list[tuple[str, str]]:
+def trace_metadata(records: Any) -> list[dict]:
     if isinstance(records, str):
         records = json.loads(records)
     if records is None:
         return []
     if not isinstance(records, list):
         raise ValueError("Native trace_records must be a list")
-    events = []
+    items = []
     for record in records:
         if not isinstance(record, dict) or record.get("source") != "aiflux":
             continue
@@ -57,10 +57,16 @@ def extract_safety(records: Any) -> list[tuple[str, str]]:
             metadata = json.loads(metadata)
         if not isinstance(metadata, dict):
             raise ValueError("AIFLUX safety trace metadata is invalid")
-        category, action = metadata.get("category"), metadata.get("action")
-        if category in SAFE_CATEGORIES and action in SAFE_ACTIONS:
-            events.append((category, action))
-    return events
+        items.append(metadata)
+    return items
+
+
+def extract_safety(records: Any) -> list[tuple[str, str]]:
+    return [
+        (metadata["category"], metadata["action"])
+        for metadata in trace_metadata(records)
+        if metadata.get("category") in SAFE_CATEGORIES and metadata.get("action") in SAFE_ACTIONS
+    ]
 
 
 def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> int:
@@ -125,6 +131,11 @@ def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> in
             row.cost, row.completeness = None, "backend_attribution_missing"
         if row.status_code == 0:
             row.cost, row.completeness = None, "status_missing"
+        if row.completeness == "complete" and any(
+            metadata.get("retry") == "transient_backend"
+            for metadata in trace_metadata(source.get("trace_records"))
+        ):
+            row.cost, row.completeness = None, "retry_usage_unknown"
         row.currency = price.currency if price and row.cost is not None else None
         for category, action in extract_safety(source.get("trace_records")):
             event_id = record_id(resource, f"{correlation}:{category}:{action}")

@@ -157,3 +157,20 @@ def test_inconsistent_or_excess_token_usage_fails_acceptance():
     with patch.object(verifier, "request", side_effect=response):
         report = verifier.checks("https://example.azure-api.net/dev/v1", "synthetic-secret", smoke=True)
     assert not report["passed"]
+
+
+def test_pii_batches_preserve_all_roles_and_never_write_synthetic_contact_content():
+    with (
+        patch.object(verifier.time, "sleep"),
+        patch.object(verifier, "request", side_effect=fixture_response) as request,
+    ):
+        report = verifier.checks("https://example.azure-api.net/dev/v1", "synthetic-secret", pii_batches=True)
+    assert report["passed"]
+    batches = [item for item in report["checks"] if item["name"].startswith("pii_")]
+    assert [item["message_count"] for item in batches] == [5, 6, 25]
+    assert all(item["roles"] == ["assistant", "developer", "system", "user"] for item in batches)
+    body = request.call_args.kwargs["body"]
+    assert len(body["messages"]) == 25
+    assert "\U0001f600" in body["messages"][0]["content"]
+    assert "test.person@example.com" not in json.dumps(report)
+    assert "pii_provider_capture" in report["not_verified"]

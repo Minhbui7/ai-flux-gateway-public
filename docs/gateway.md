@@ -42,6 +42,28 @@ documented observation as well as object metadata, and rejects malformed metadat
 These checks are not provider-side PII capture, full adversarial acceptance, regional
 failover proof or production release evidence.
 
+The original synchronous PII call incorrectly sent up to 25 documents to an API whose
+[document limit is five](https://learn.microsoft.com/azure/ai-services/language-service/concepts/data-limits).
+The dev policy now emits at most five sequential, guarded five-document batches, retaining
+global message IDs and validating every response before assembling redacted messages.
+Timeouts/errors/warnings/missing or mismatched documents still fail closed. Text remains
+bounded to 4,800 UTF-16 code units per message and 8,000 total; no chunking within a message
+or serialized-JSON replacement is used. No PII response content is carried in outbound headers.
+
+Fresh acceptance now passes 27 checks, including 5-, 6- and 25-message requests across
+system/developer/user/assistant roles with synthetic contact data, supplementary Unicode
+and combining marks. These are successful inspection/forwarding checks, **not** independent
+provider-side capture or evidence that every PII category/language is handled.
+
+A six-message test exposed a genuine Sol East US backend 500. The dev route now retries
+only buffered 500/502/503/504 model responses once, reselecting the same-model regional pool,
+with a one-second delay and 45-second timeout per attempt. Exhausted 5xx returns an
+OpenAI-shaped 503. Validation/auth/safety errors and backend 429 are not retried.
+This does not prove deterministic failover, transport recovery or Retry-After handling.
+Retry traces contain only a constant marker and previous HTTP status. Ingestion marks
+otherwise complete retried usage `retry_usage_unknown` with no complete cost, since prior
+attempt usage may be missing. Neither prompts nor completions are traced.
+
 Both manually deployed Haiku 5.5 endpoints passed direct operator-Entra completions.
 Account-scoped Cognitive Services User access is configured for the gateway in both regions;
 actual Haiku gateway invocation and OpenAI-compatible native translation remain unverified.
@@ -49,6 +71,7 @@ The model Terraform root does not own or import those manual deployments.
 
 Reproduce bounded checks with `python gateway\tools\verify_dev.py --subscription <id>
 --resource-group <rg> --apim <name> --output infra\terraform\dev-acceptance.json --smoke --limits`.
+Add `--pii-batches` for the three bounded synthetic role/Unicode batching checks.
 The verifier obtains the approved test key in memory, never writes response text or secrets,
 and reports unsupported/unverified functionality separately. `--limits` makes at most
 eight burst requests and waits for counter recovery; it is paid synthetic traffic.

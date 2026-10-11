@@ -153,6 +153,43 @@ def test_invalid_native_safety_metadata_is_not_silently_dropped(metadata):
         extract_safety([{"source": "aiflux", "metadata": metadata}])
 
 
+def test_retry_usage_is_not_presented_as_complete_billing(env):
+    key = create_key(env)
+    now = datetime.now(UTC)
+    source = {
+        "subscription_id": key["id"],
+        "correlation_id": "retry",
+        "resource_id": env.settings.apim_resource_id,
+        "occurred_at": now,
+        "model": "test-model",
+        "input_tokens": 9,
+        "output_tokens": 4,
+        "status_code": 200,
+        "trace_records": [
+            {"source": "aiflux", "metadata": '{"retry":"transient_backend","previous_status":"500"}'}
+        ],
+    }
+    with Session(env.db_engine) as db:
+        db.add(
+            ModelPrice(
+                model="test-alias",
+                provider="test",
+                region="test-region",
+                effective_from=now,
+                currency="USD",
+                input_per_million=Decimal(2),
+                output_per_million=Decimal(4),
+                input_includes_cached=True,
+            )
+        )
+        db.commit()
+        ingest_rows(db, [source], Catalog.load(env.settings.catalog_path))
+        db.commit()
+        row = db.scalar(select(UsageRecord))
+        assert row.cost is None and row.completeness == "retry_usage_unknown"
+        assert db.scalar(select(SafetyEvent)) is None
+
+
 def test_usage_query_includes_the_deployed_chat_operation():
     query = (
         Path(__file__).resolve().parents[2]

@@ -13,4 +13,5 @@
 **/live-identity.json
 **/dev-acceptance.json
 **/dev-bearer-probe.json
+**/pii-batch-acceptance.json
 !**/*.tfvars.example
