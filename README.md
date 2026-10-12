@@ -37,7 +37,7 @@ This is the group's metadata location, not proof of model/SKU availability.
 All scripts must select this subscription explicitly; do not change shared CLI
 defaults. Existing resource groups and workloads must not be modified.
 
-Development uses Basic v2 APIM, public P1v3 apps/Foundry endpoints and private SQL S0
+Development uses Basic v2 APIM, public B1 apps/Foundry endpoints and private SQL S0
 in Australia East. SQL, Key Vault and Function storage have private endpoints;
 API/ingestion use outbound VNet integration. Single-tenant Entra registrations,
 application images and SQL migration/bootstrap are deployed.
@@ -50,8 +50,40 @@ Guarded Luna/Sol text completions have succeeded through
 `https://aiflux-fdpo-dev-apim.azure-api.net/dev/v1` with an approved APIM subscription
 key. This separate limited dev product is not the final native unified API: streaming,
 tools and structured outputs are rejected. The main `/v1` route remains denied and
-ingestion remains disabled. Haiku 5.5 is deployed in both model regions but not routed.
-Full portal journeys, failover/quota/safety acceptance and live FinOps remain pending.
+ingestion remains disabled. Haiku 5.5 is deployed in both model regions but is not
+routed by this original development API. Basic customer acceptance is recorded
+below; full admin/multi-tenant journeys, failover/quota/safety and live FinOps remain pending.
+
+**Latest development path (2026-10-12):** the user-approved, Terraform-managed
+text adapter at `https://aiflux-fdpo-dev-apim.azure-api.net/dev/llm/v1` returns
+real OpenAI-shaped completions for `gpt-5.6-luna`, `gpt-5.6-sol` and
+`claude-haiku-5-5`. This is explicit APIM policy translation, **not** the native
+unified-model preview. Its separate `aiflux-dev-unified` product is used by the
+control plane for new team keys. The original `/dev/v1` remains available for
+its original approved subscriptions; `/v1` and the experimental `/llm/v1` remain
+denied. Both providers retain original/redacted input safety, Prompt Shields,
+five-document PII batches, output safety, UAMI authentication and bounded retry.
+Streaming/tools/structured output are rejected. The user-approved adapter bounds
+are 2 RPM/model/subscription, 20,000 TPM and 100,000 completion tokens per request,
+with a 240-second backend timeout. Legacy `/dev/v1` retains 2,048 TPM and 64 output
+tokens. A live Sol request completed a 6,364-word essay with 8,571 completion tokens.
+The Haiku response-conversion failure is repaired: validated internal thinking
+blocks are omitted, full usage is retained, and final text must pass output
+safety. Haiku completed a live 5,241-word essay with normal `stop`; malformed,
+unknown or internal-only responses still fail closed. The ceiling does not
+guarantee generation length or completion before a timeout.
+
+Direct customer/admin App Service endpoints are intentionally public as the
+approved stopgap; Entra and SQL membership authorization remain mandatory.
+The portals use the direct API and APIM origins, with exact CORS/CSP settings,
+native subscription-key headers and capability-aware non-streaming requests.
+The development catalog contains three callable models and six clearly labeled
+preview-only tiles. Production catalog and ingestion remain disabled.
+The user confirmed the signed-in customer journey: team subscription
+reconciliation succeeds, its key reveals, and both OpenAI and Anthropic respond
+in the playground. The deployment-only blockers were SQL Server-invalid Boolean
+approval predicates and the adapter product's one-subscription cap. Both are fixed;
+the user-approved cap is 10, and disposable test subscriptions have been deleted.
 
 Bounded dev acceptance now includes correct 401/400/415/429/403 status handling,
 Luna/Sol inference, and a synthetic Prompt Shields rejection. RPM/TPM counters are separate;
@@ -63,8 +95,9 @@ The synchronous PII five-document limit is now respected while preserving the 25
 API bound; 5/6/25-message role/Unicode cases pass. Buffered transient model 5xx gets one
 bounded retry; unknown usage from prior attempts remains incomplete in FinOps.
 
-**Current priority:** complete model routing, portal integration, unified API and
-live FinOps before fixing Application Gateway HTTPS. Its trusted certificate is
+**Basic development deployment accepted.** Remaining work: native unified API,
+complete safety/failover acceptance and live FinOps. Application
+Gateway HTTPS remains deferred. Its trusted certificate is
 issued, but Key Vault certificate access blocks HTTPS; renewal is not automated.
 Direct APIM managed HTTPS remains the dev inference path. Deferring the edge fix
 does not waive final TLS/origin-protection acceptance.
@@ -111,6 +144,11 @@ provide gateway-region disaster recovery. Customers share a global backend pool:
 cross-border processing must be disclosed during onboarding.
 
 ## Backlog
+
+Resolve native unified-model routing/translation, replace the six
+preview tiles with genuinely deployed/validated models, enable validated
+FinOps ingestion, and fix Application Gateway certificate access/renewal.
+Public App Service access is a development stopgap, not final edge acceptance.
 
 Managed Redis semantic caching, customer-editable limits within IDS allocations,
 and explicitly consented Cosmos DB subscription memory are not implemented in

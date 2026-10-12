@@ -20,6 +20,8 @@ export interface CatalogModel {
   provider: string;
   capabilities: string[];
   enabled: boolean;
+  placeholder?: boolean;
+  max_completion_tokens?: number | null;
 }
 
 export interface Subscription {

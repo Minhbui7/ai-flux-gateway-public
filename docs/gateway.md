@@ -1,5 +1,99 @@
 # APIM gateway: production disabled, guarded development route deployed
 
+## Latest guarded adapter (2026-10-12)
+
+The user explicitly approved a non-native fallback. Terraform now owns a
+separate ordinary HTTP API, `aiflux-dev-unified`, at `/dev/llm/v1`, and its
+subscription-required `aiflux-dev-unified` product. The native preview API is
+preserved for investigation but globally denied, alongside the production `/v1`.
+No keys are compared manually and native subscription validation stays enabled.
+The original two-model `/dev/v1` API and product keep their existing behavior.
+
+The adapter reuses `dev-openai.xml.tftpl` with an explicit mode. Only the three
+deployed aliases `gpt-5.6-luna`, `gpt-5.6-sol` and `claude-haiku-5-5` are accepted.
+Haiku uses the primary Foundry account's `/anthropic/v1/messages` endpoint:
+redacted system/developer messages become `system`, user/assistant messages
+retain their roles, and `max_completion_tokens` becomes `max_tokens`.
+Valid text blocks are joined in provider order and converted to OpenAI
+`choices`, `finish_reason` and `usage` before output safety. Metadata-only live
+diagnosis confirmed that Haiku also returns a `thinking` block with string
+`thinking` and a nonempty string `signature`. Those validated internal blocks
+are omitted from the answer; their contents/signatures are not logged, and full
+provider input/output usage is retained, including internal generation.
+A nonempty text answer is mandatory. Internal-only responses, malformed blocks,
+tools, unknown or unconfirmed blocks (including `redacted_thinking`), unsupported
+stop reasons and invalid/overflowing counters fail closed with HTTP 503
+`provider_response_invalid`. Only fixed error metadata is emitted; no raw
+provider error or internal content is released. Temporary shape diagnostics
+have been removed.
+No streaming, tools, structured output, provider-key authentication or
+cross-provider failover is introduced.
+
+Managed-identity auth uses the gateway UAMI client ID and Cognitive Services
+audience. Original-input safety/Prompt Shields, guarded PII batching, redacted
+input safety and completion safety remain mandatory for both providers.
+The user-approved adapter limits are 2 RPM/model/subscription, 20,000 TPM and
+100,000 completion tokens, with a 240-second backend timeout and at most one
+buffered transient-5xx retry. Separate adapter variables preserve the legacy
+`/dev/v1` limits of 2,048 TPM, 64 output tokens and a 45-second backend timeout.
+The new variables retain conservative defaults; the active approved inputs
+explicitly select the higher limits. Prompt tokens are estimated at admission;
+actual reported prompt/completion usage is accounted after the response.
+A large response can temporarily exceed the TPM budget and throttle subsequent
+calls: TPM is not a hard per-request output ceiling.
+Both providers accepted a 100,000-token request budget, and 100,001 is rejected.
+Sol completed a 6,364-word essay with 8,571 completion tokens and normal `stop`.
+The earlier Haiku 503 was a response-conversion failure: the provider returned
+HTTP 200 with mixed thinking/text blocks, but the adapter rejected non-text
+blocks before output safety. After the strict normalization repair, a live
+Haiku essay completed with 5,241 words, 11,673 reported completion tokens,
+11,767 total tokens, normal `stop` and successful output safety in 68.97 seconds.
+This verifies one long buffered response, not an unlimited-generation guarantee.
+Streaming remains disabled.
+Input size/message/history bounds and all safety/PII checks are unchanged.
+Retry accounting is still incomplete; ingestion remains disabled.
+
+APIM CORS is the first adapter inbound policy, before inherited gates; this
+allows unauthenticated preflight processing. Only the exact configured customer
+and admin App Service origins are permitted, with `Content-Type` and
+`Ocp-Apim-Subscription-Key`, and `Retry-After` exposed. No wildcard or credentialed
+CORS is used. The browser sends the subscription header, not unverified bearer
+subscription auth. Previews are not listed by APIM and cannot be called.
+
+Metadata-only acceptance passed 15 checks: missing/invalid-key denial, exact
+three-model discovery, both portal preflight/actual CORS responses, untrusted-origin
+exclusion, unsupported-shape rejection and real completions for all three models.
+These CLI checks alone do not prove signed-in customer, regional failover or
+complete adversarial acceptance. The user subsequently confirmed the basic
+signed-in customer flow through the adapter: team subscription reconciliation,
+key reveal and both provider playground responses. Regional failover and complete
+adversarial acceptance remain pending.
+Use `gateway\tools\verify_adapter.py` with an explicitly approved adapter-product
+test subscription and both `--portal-origin` values; `--smoke` makes three paid
+synthetic calls. Keys and response text are never written; empty HTTP 200 responses
+cannot pass completion acceptance. Dispose of the unowned synthetic subscription
+after checking; it is not a tenant's billable subscription.
+
+Normalization regressions execute the exact policy C# expression against
+synthetic provider responses, rather than a Python translation. Install .NET
+8 SDK, then run `pytest -q tests\contract\test_anthropic_normalization.py`.
+`AIFLUX_DOTNET` can select an isolated SDK executable; CI installs the SDK
+explicitly. Cases cover ordered text, thinking/text, internal-only output,
+malformed/unknown/tool blocks, stop/length mapping and token counter bounds.
+Post-repair live checks also verified all three aliases with 100,000-token
+budgets, 100,001 rejection, key/CORS/input-shape controls and the specific
+fail-closed error for an internal-only Haiku response. Test subscriptions were
+deleted. Signed-in long-Haiku browser acceptance remains separate from these
+gateway checks.
+
+The native investigation found an empty inherited backend section caused
+empty HTTP 200 responses. The manually created backends also lacked the gateway
+UAMI client ID, with an incorrect OpenAI audience. Correcting authentication
+and forwarding enabled OpenAI, but Haiku was sent to
+`/anthropic/v1/messages/chat/completions` without translation. ARM model aliases
+exist, yet a working native routing/translation pipeline was not established.
+That is why the explicit adapter was approved; do not represent it as native support.
+
 ## Implemented surface
 
 Terraform creates the public Basic v2 development candidate, an **unpublished** subscription-required
@@ -95,7 +189,7 @@ The `/v1` placeholder remains unconditionally denied. Editing the production Pro
 catalog or manifest cannot activate it. Any future production activation needs a separately reviewed
 implementation using the verified native contract, not an escape hatch around policy.
 
-## Why native provisioning is blocked
+## Earlier native provisioning investigation
 
 The [unified-model API documentation](https://learn.microsoft.com/azure/api-management/unified-model-api)
 documents **portal creation only** and preview rollout. The published
@@ -124,11 +218,28 @@ revocation, product scope and native validation must be proved on the target rol
 A canonical sample's preview `subscriptionKeyParameterNames.bearer = "enabled"` setting
 was tried on this instance. ARM accepted the update but omitted it on readback, and
 bearer-only access returned 401. The ineffective configuration was removed; native header
-authentication remains required. Portal creation still requires interactive Entra sign-in.
+authentication remains required.
+
+User-directed verification is CLI-only: Azure CLI authentication, ARM reads and direct
+HTTPS probes, not Azure portal sign-in. On 2026-10-12, an ARM API-list read using
+`2025-09-01-preview` confirmed only the disabled `/v1` and guarded `/dev/v1` APIs,
+both subscription-required, with no model/LLM configuration properties exposed.
+Fresh CLI-driven acceptance passed 21 baseline/error/model-completion checks.
+Provider registration was `Registered`, but its resource-type listing returned empty;
+that result does **not** prove preview unavailability. Likewise, absence of a portal
+tile is not definitive rollout evidence.
+
+At that point, the remaining native blocker was a supported, reproducible management-plane contract
+and verified target rollout, **not browser authentication**. Do not require the user to
+sign in as a verification workaround or invent resource/policy fields to fill that gap.
 
 ## Catalog integration
 
 The shared source is `gateway\catalog\models.json`, currently exactly `{"models":[]}`.
+That is the **production** source. The separately bundled development source
+`gateway\catalog\dev-models.json` is activated only after adapter acceptance.
+Its three enabled models advertise `chat` and the 64-token output bound;
+the six preview placeholders have no capabilities and cannot be enabled.
 Python and portals read `id`, `provider`, `capabilities`, `enabled`, `backend_model`,
 and optional `region`. No provider/model/deployment names are supplied as production defaults.
 `catalog.schema.json` also describes operator-supplied endpoint pools, priorities/weights,

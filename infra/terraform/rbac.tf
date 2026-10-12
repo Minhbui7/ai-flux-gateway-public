@@ -66,7 +66,7 @@ resource "azurerm_role_assignment" "edge_certificate" {
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
-  for_each             = local.prerequisites_stage ? toset(["api", "customer", "admin"]) : toset([])
+  for_each             = local.prerequisites_stage ? toset(concat(["api", "customer", "admin"], var.ingestion_container_image != "" ? ["ingestion"] : [])) : toset([])
   scope                = local.registry_resource_id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.identity[each.key].principal_id

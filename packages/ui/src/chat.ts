@@ -10,6 +10,7 @@ export interface ChatRequest {
   tools?: unknown[];
   tool_choice?: unknown;
   response_format?: unknown;
+  max_completion_tokens?: number;
 }
 
 export interface ProposedToolCall {
@@ -169,7 +170,7 @@ export async function chatCompletion(opts: StreamOptions): Promise<ChatResult> {
     res = await fetchImpl(`${opts.gatewayUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${opts.key}`,
+        "Ocp-Apim-Subscription-Key": opts.key,
         "Content-Type": "application/json",
         Accept: opts.stream ? "text/event-stream" : "application/json",
       },

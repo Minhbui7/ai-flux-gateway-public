@@ -6,7 +6,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from aiflux.config import Settings
@@ -64,7 +64,7 @@ def get_principal(
     org = db.scalar(
         select(Organization).where(
             Organization.tenant_id == tenant_id,
-            Organization.enabled.is_(True),
+            Organization.enabled == true(),
         )
     )
     if org is None:
@@ -84,7 +84,7 @@ def get_principal(
         select(Member).where(
             Member.organization_id == org.id,
             Member.object_id == object_id,
-            Member.enabled.is_(True),
+            Member.enabled == true(),
         )
     )
     if member is None:

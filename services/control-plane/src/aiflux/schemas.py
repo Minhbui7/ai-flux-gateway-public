@@ -97,6 +97,8 @@ class CatalogOutput(BaseModel):
     provider: str
     capabilities: list[str]
     enabled: bool
+    placeholder: bool = False
+    max_completion_tokens: int | None = None
 
 
 class SubscriptionOutput(BaseModel):

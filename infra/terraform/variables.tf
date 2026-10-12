@@ -317,6 +317,12 @@ variable "sql_sku" {
   }
 }
 
+variable "sql_express_vulnerability_assessment_enabled" {
+  description = "Preserve the reviewed SQL express vulnerability assessment posture."
+  type        = bool
+  default     = false
+}
+
 variable "log_retention_days" {
   type = number
 }
@@ -333,6 +339,85 @@ variable "dev_openai_inference_enabled" {
   description = "Enable only the isolated, subscription-required text-only development API after verified deployment and policy prerequisites. Does not publish the production product."
   type        = bool
   default     = false
+}
+
+variable "dev_unified_inference_enabled" {
+  description = "User-approved guarded text adapter, not the native unified API. Requires verified OpenAI prerequisites and deployed Haiku 5.5 in the primary Foundry account."
+  type        = bool
+  default     = false
+}
+
+variable "dev_direct_portals_enabled" {
+  description = "Approved temporary public App Service origins with Entra authorization; SCM stays operator-restricted and private data stays private."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.dev_direct_portals_enabled || (var.dev_unified_inference_enabled && var.deployment_stage != "public-edge")
+    error_message = "Direct development portals require the guarded adapter and cannot be used as public-edge release acceptance."
+  }
+}
+
+variable "dev_price_bootstrap_enabled" {
+  description = "Explicit one-off import of reviewed dev prices using the API's existing private SQL identity; disable after verification."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.dev_price_bootstrap_enabled || (var.dev_direct_portals_enabled && var.dev_catalog_accepted)
+    error_message = "Development price bootstrap requires the accepted development catalog and direct development deployment."
+  }
+}
+
+variable "dev_portal_origins" {
+  description = "Exact HTTPS customer/admin App Service origins for development CORS; no wildcard."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for origin in var.dev_portal_origins : can(regex("^https://[a-z0-9-]+\\.azurewebsites\\.net$", origin))]) && length(distinct(var.dev_portal_origins)) == length(var.dev_portal_origins)
+    error_message = "Development CORS origins must be distinct exact HTTPS App Service origins without paths."
+  }
+
+}
+
+variable "dev_catalog_accepted" {
+  description = "Enable the development catalog only after live guarded completions for both providers; does not enable production or ingestion."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.dev_catalog_accepted || var.dev_direct_portals_enabled
+    error_message = "Development catalog acceptance requires the direct-origin guarded development deployment."
+  }
+}
+
+variable "ingestion_enabled" {
+  description = "Enable the verified usage Function only with an immutable container, accepted catalog and explicit activation cutoff."
+  type        = bool
+  default     = false
+}
+
+variable "ingestion_timer_enabled" {
+  description = "Enable timer only after Function runtime readiness is verified."
+  type        = bool
+  default     = false
+}
+
+variable "ingestion_container_image" {
+  description = "Immutable ingestion Function container image, including SQL Server ODBC Driver 18."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.ingestion_container_image == "" || can(regex("^.+@sha256:[0-9a-f]{64}$", var.ingestion_container_image))
+    error_message = "Ingestion container must use an immutable sha256 digest."
+  }
+}
+
+variable "ingestion_start_at" {
+  description = "Explicit UTC activation cutoff for new ingestion; historical replay is a separate operation."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.ingestion_start_at == "" || can(formatdate("YYYY", var.ingestion_start_at))
+    error_message = "Ingestion cutoff must be an RFC3339 timestamp."
+  }
 }
 
 variable "dev_openai_rpm_limit" {
@@ -373,6 +458,26 @@ variable "dev_openai_content_safety_threshold" {
   validation {
     condition     = var.dev_openai_content_safety_threshold == null || (var.dev_openai_content_safety_threshold >= 0 && var.dev_openai_content_safety_threshold <= 7 && floor(var.dev_openai_content_safety_threshold) == var.dev_openai_content_safety_threshold)
     error_message = "The explicit Content Safety threshold must be an integer from 0 (most restrictive) through 7 (least restrictive)."
+  }
+}
+
+variable "dev_unified_tpm_limit" {
+  description = "Approved token-per-minute ceiling per subscription/model for the guarded playground adapter."
+  type        = number
+  default     = 2048
+  validation {
+    condition     = var.dev_unified_tpm_limit >= 1 && var.dev_unified_tpm_limit <= 20000 && floor(var.dev_unified_tpm_limit) == var.dev_unified_tpm_limit
+    error_message = "The guarded playground adapter permits at most 20000 tokens per minute per subscription/model."
+  }
+}
+
+variable "dev_unified_max_completion_tokens" {
+  description = "Approved completion-token ceiling for the guarded playground adapter; provider limits still apply."
+  type        = number
+  default     = 64
+  validation {
+    condition     = var.dev_unified_max_completion_tokens >= 1 && var.dev_unified_max_completion_tokens <= 100000 && floor(var.dev_unified_max_completion_tokens) == var.dev_unified_max_completion_tokens
+    error_message = "The guarded playground adapter permits at most 100000 completion tokens per request."
   }
 }
 

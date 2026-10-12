@@ -75,7 +75,7 @@ export function PlaygroundPage() {
 }
 
 interface ChatProps {
-  models: { id: string; capabilities: string[] }[];
+  models: { id: string; capabilities: string[]; max_completion_tokens?: number | null }[];
   subs: { id: string; name: string }[];
   gatewayUrl: string;
   keys: Record<string, Partial<Record<KeyName, string>>>;
@@ -89,7 +89,7 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
   const [pasted, setPasted] = useState("");
   const [system, setSystem] = useState("");
   const [input, setInput] = useState("");
-  const [stream, setStream] = useState(true);
+  const [stream, setStream] = useState(models[0]!.capabilities.includes("stream"));
   const [useTools, setUseTools] = useState(false);
   const [toolsText, setToolsText] = useState(SAMPLE_TOOLS);
   const [choiceMode, setChoiceMode] = useState<ToolChoiceMode>("auto");
@@ -107,6 +107,7 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
   const model = models.find((m) => m.id === modelId)!;
   const toolsOk = supportsTools(model.capabilities);
   const schemaOk = supportsStructured(model.capabilities);
+  const streamOk = model.capabilities.includes("stream");
   const revealed = keys[subId]?.primary ?? keys[subId]?.secondary;
   const key = revealed ?? pasted.trim();
 
@@ -130,6 +131,7 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
     if (!text) return setFormError("Enter a message.");
     if (!key) return setFormError("A subscription key is required. Reveal one or paste it below.");
     const request: Record<string, unknown> = { model: modelId };
+    if (model.max_completion_tokens != null) request.max_completion_tokens = model.max_completion_tokens;
     if (useTools && toolsOk) {
       if (!toolsCheck?.ok) return setFormError(toolsCheck?.error ?? "Tools are invalid.");
       request.tools = toolsCheck.value;
@@ -152,7 +154,7 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
     const result = await chatCompletion({
       gatewayUrl,
       key,
-      stream,
+      stream: stream && streamOk,
       signal: ctrl.signal,
       request: { ...(request as { model: string }), messages },
       onUpdate: setLive,
@@ -184,7 +186,9 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
         )}
         {revealMsg && <p role="status" className="muted">{revealMsg}</p>}
         <Field label="System prompt (optional)">{(id) => <textarea id={id} rows={2} value={system} onChange={(e) => setSystem(e.target.value)} disabled={busy} />}</Field>
-        <label className="check"><input type="checkbox" checked={stream} onChange={(e) => setStream(e.target.checked)} disabled={busy} /> Stream response (SSE)</label>
+        <label className="check"><input type="checkbox" checked={stream && streamOk} onChange={(e) => setStream(e.target.checked)} disabled={busy || !streamOk} /> Stream response (SSE)</label>
+        {!streamOk && <p className="muted">This deployment supports non-streaming text only.</p>}
+        {model.max_completion_tokens != null && <p className="muted">Development output limit: {model.max_completion_tokens} tokens.</p>}
 
         <fieldset disabled={busy}>
           <legend>Tools</legend>

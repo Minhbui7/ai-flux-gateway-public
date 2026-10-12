@@ -9,10 +9,38 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from aiflux.models import IngestionState, ModelPrice, UsageRecord
+from aiflux.schemas import PriceCreate
 
 
 def aware(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def create_price(db: Session, payload: PriceCreate, *, idempotent: bool = False) -> tuple[ModelPrice, bool]:
+    rows = db.scalars(
+        select(ModelPrice)
+        .where(
+            ModelPrice.model == payload.model,
+            ModelPrice.provider == payload.provider,
+            ModelPrice.region == payload.region,
+        )
+        .with_hint(ModelPrice, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+    ).all()
+    values = payload.model_dump()
+    for price in rows:
+        existing = {key: getattr(price, key) for key in values}
+        existing["effective_from"] = aware(price.effective_from)
+        existing["effective_to"] = aware(price.effective_to) if price.effective_to else None
+        if idempotent and existing == values:
+            return price, False
+        if (payload.effective_to is None or aware(price.effective_from) < payload.effective_to) and (
+            price.effective_to is None or payload.effective_from < aware(price.effective_to)
+        ):
+            raise ValueError("Price periods must not overlap")
+    row = ModelPrice(**values)
+    db.add(row)
+    db.flush()
+    return row, True
 
 
 def price_for(db: Session, row: UsageRecord) -> ModelPrice | None:
@@ -147,7 +175,11 @@ def usage_response(
             "throttled_requests": throttled or 0,
             "e2e_p95_ms": p95,
             "ttft_supported": False,
-            "cache_tokens_supported": False,
+            "cache_tokens_supported": bool(db.scalar(
+                select(func.count()).select_from(UsageRecord).where(
+                    *conditions, UsageRecord.cached_input_tokens.is_not(None),
+                )
+            )),
             "last_ingested_at": aware(state.last_success_at).isoformat() if state else None,
         },
         "items": [usage_dict(row) for row in rows],

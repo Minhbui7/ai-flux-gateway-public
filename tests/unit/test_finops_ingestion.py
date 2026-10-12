@@ -1,13 +1,13 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from aiflux.catalog import BackendEntry, Catalog
 from aiflux.finops import calculate_cost
-from aiflux.ingestion import extract_safety, ingest_rows, nonnegative
-from aiflux.models import ModelPrice, SafetyEvent, UsageRecord
+from aiflux.ingestion import extract_safety, extract_usage, ingest_rows, nonnegative, run_once
+from aiflux.models import IngestionState, ModelPrice, SafetyEvent, UsageRecord
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_control_plane import create_key
@@ -147,6 +147,61 @@ def test_live_native_trace_metadata_json_string_is_supported():
     ) == [("ContentSafety", "blocked")]
 
 
+def usage_trace(**changes):
+    return [{
+        "source": "aiflux",
+        "metadata": {
+            "category": "usage",
+            "payload": json.dumps({
+                "schema": "finops-v1", "model": "test-alias", "attempts": 1,
+                "input_tokens": 100, "output_tokens": 20,
+                "cached_input_tokens": 40, "cache_write_tokens": 10, **changes,
+            }),
+        },
+    }]
+
+
+def test_provider_usage_trace_prices_cache_and_reports_support(env):
+    key = create_key(env)
+    now = datetime.now(UTC)
+    source = {
+        "subscription_id": key["id"], "correlation_id": "provider-usage",
+        "resource_id": env.settings.apim_resource_id, "occurred_at": now,
+        "status_code": 200, "trace_records": usage_trace(),
+    }
+    with Session(env.db_engine) as db:
+        db.add(price(model="test-alias", provider="test", region="test-region",
+                     effective_from=now, currency="USD"))
+        db.commit()
+        ingest_rows(db, [source], Catalog.load(env.settings.catalog_path))
+        db.commit()
+        row = db.scalar(select(UsageRecord))
+        assert row.cost == Decimal("0.00025") and row.completeness == "complete"
+        assert row.cached_input_tokens == 40 and row.cache_write_tokens == 10
+        source["trace_records"] = usage_trace(attempts=2)
+        ingest_rows(db, [source], Catalog.load(env.settings.catalog_path))
+        db.commit()
+        assert row.cost is None and row.completeness == "retry_usage_unknown"
+    response = env.client.get("/api/usage", headers=env.customer).json()
+    assert response["summary"]["cache_tokens_supported"] is True
+
+
+@pytest.mark.parametrize("changes", [
+    {"schema": "unsupported"}, {"attempts": 0}, {"attempts": True},
+    {"cached_input_tokens": -1}, {"output_tokens": "20"}, {"model": None},
+])
+def test_invalid_provider_usage_trace_is_rejected(changes):
+    with pytest.raises(ValueError):
+        extract_usage(usage_trace(**changes))
+
+
+def test_duplicate_usage_trace_is_rejected_and_missing_counters_stay_unknown():
+    with pytest.raises(ValueError, match="unique"):
+        extract_usage(usage_trace() * 2)
+    assert extract_usage(usage_trace(cached_input_tokens=None))["cached_input_tokens"] is None
+    assert extract_usage([]) is None
+
+
 @pytest.mark.parametrize("metadata", ['{"category":', '["ContentSafety"]'])
 def test_invalid_native_safety_metadata_is_not_silently_dropped(metadata):
     with pytest.raises(ValueError):
@@ -281,3 +336,69 @@ def test_catalog_rejects_duplicate_endpoint_ids(env):
     env.settings.catalog_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate backend endpoint"):
         Catalog.load(env.settings.catalog_path)
+
+
+def test_activation_cutoff_clamps_initial_and_replayed_overlap(env, monkeypatch):
+    from aiflux import ingestion
+
+    cutoff = datetime.now(UTC) - timedelta(minutes=20)
+    env.settings.ingestion_start_at = cutoff
+    windows = []
+
+    def query(client, settings, start, end):
+        windows.append((start, end))
+        return []
+
+    monkeypatch.setattr(ingestion, "engine_for", lambda url: env.db_engine)
+    monkeypatch.setattr(ingestion, "query_rows", query)
+    assert run_once(env.settings, object()) == 0
+    assert run_once(env.settings, object()) == 0
+    assert len(windows) == 2
+    assert all(start == cutoff and end > start for start, end in windows)
+    with Session(env.db_engine) as db:
+        state = db.get(IngestionState, "native-llm")
+        assert state is not None
+
+
+def test_activation_cutoff_cannot_skip_existing_watermark(env, monkeypatch):
+    from aiflux import ingestion
+
+    now = datetime.now(UTC)
+    env.settings.ingestion_start_at = now
+    with Session(env.db_engine) as db:
+        db.add(IngestionState(id="native-llm", watermark=now - timedelta(hours=1), last_success_at=now))
+        db.commit()
+    monkeypatch.setattr(ingestion, "engine_for", lambda url: env.db_engine)
+    with pytest.raises(ValueError, match="explicit reconciliation"):
+        run_once(env.settings, object())
+
+
+def test_activation_cutoff_requires_timezone(env):
+    env.settings.ingestion_start_at = datetime(2026, 1, 1)
+    with pytest.raises(ValueError, match="explicit timezone"):
+        run_once(env.settings, object())
+
+
+def test_future_activation_cutoff_does_not_query_or_advance(env, monkeypatch):
+    from aiflux import ingestion
+
+    env.settings.ingestion_start_at = datetime.now(UTC) + timedelta(days=1)
+    monkeypatch.setattr(ingestion, "engine_for", lambda url: env.db_engine)
+    assert run_once(env.settings, object()) == 0
+    with Session(env.db_engine) as db:
+        assert db.get(IngestionState, "native-llm") is None
+
+
+def test_multiple_backend_requests_are_visibly_incomplete(env):
+    key = create_key(env)
+    source = {
+        "subscription_id": key["id"], "correlation_id": "multiple-attempts",
+        "resource_id": "resource", "occurred_at": datetime.now(UTC),
+        "model": "test-model", "input_tokens": 9, "output_tokens": 4,
+        "status_code": 200, "multiple_backend_requests": True,
+    }
+    with Session(env.db_engine) as db:
+        ingest_rows(db, [source], Catalog.load(env.settings.catalog_path))
+        db.commit()
+        row = db.scalar(select(UsageRecord))
+        assert row.cost is None and row.completeness == "retry_usage_unknown"

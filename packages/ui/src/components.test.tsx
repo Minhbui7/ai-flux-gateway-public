@@ -7,7 +7,8 @@ import { ControlApi } from "./client";
 import { SessionProvider } from "./session";
 import { SubscriptionsPage } from "./pages/SubscriptionsPage";
 import { UsagePage, costLabel } from "./pages/UsagePage";
-import { outcomeView } from "./pages/PlaygroundPage";
+import { PlaygroundPage, outcomeView } from "./pages/PlaygroundPage";
+import { ModelsPage } from "./pages/ModelsPage";
 import { validatePrice } from "./pages/admin";
 import type { UsagePage as UsageData } from "./types";
 
@@ -84,6 +85,48 @@ describe("outcomeView", () => {
   it("keeps cancellation, filter, provider error and abnormal distinct", () => {
     const labels = ["cancelled", "content_filter", "provider_error", "abnormal", "completed"].map((o) => outcomeView(r(o))!.label);
     expect(new Set(labels).size).toBe(5);
+  });
+
+  describe("Guarded development catalog and playground", () => {
+    const catalog = { items: [
+      { id: "approved", provider: "OpenAI", enabled: true, capabilities: ["chat"], max_completion_tokens: 64 },
+      { id: "preview", provider: "Anthropic", enabled: false, placeholder: true, capabilities: [] },
+    ], total: 2 };
+
+    it("renders preview tiles explicitly as uncallable", async () => {
+      wrap(withApi(() => catalog), <ModelsPage />);
+      expect(await screen.findByRole("heading", { name: "preview" })).toBeInTheDocument();
+      expect(screen.getByText("Preview only - not callable")).toBeInTheDocument();
+    });
+
+    it("sends bounded non-streaming chat and never offers placeholders", async () => {
+      const api = withApi((url) => url.endsWith("/models") ? catalog : {
+        items: [{ id: "s1", name: "Team", state: "active" }], total: 1,
+      });
+      wrap(api, <PlaygroundPage />);
+      await screen.findByRole("option", { name: "approved" });
+      expect(screen.queryByRole("option", { name: "preview" })).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: /Stream response/ })).toBeDisabled();
+      await userEvent.type(screen.getByLabelText("Or paste a key"), "test-key");
+      await userEvent.type(screen.getByLabelText("Message"), "Reply OK.");
+      const gateway = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+      })));
+      try {
+        await userEvent.click(screen.getByRole("button", { name: "Send" }));
+        await screen.findByText("Completed");
+        const [url, init] = gateway.mock.calls[0]!;
+        expect(url).toBe("https://g/v1/chat/completions");
+        expect(JSON.parse(init!.body as string)).toMatchObject({
+          model: "approved", stream: false, max_completion_tokens: 64,
+        });
+        expect(init!.headers).toMatchObject({ "Ocp-Apim-Subscription-Key": "test-key" });
+        expect(JSON.parse(init!.body as string)).not.toHaveProperty("stream_options");
+      } finally {
+        gateway.mockRestore();
+      }
+    });
   });
 });
 

@@ -54,6 +54,14 @@ def service_principal(app):
     return found[0] if found else az("ad", "sp", "create", "--id", app["appId"])
 
 
+def portal_redirect_uris(app, component, path):
+    existing = (app.get("spa") or {}).get("redirectUris", [])
+    return sorted(set(existing) | {
+        HOST + path,
+        f"https://{PREFIX}-{component}.azurewebsites.net{path}",
+    })
+
+
 def main():
     account = az("account", "show")
     if account["tenantId"] != TENANT:
@@ -96,7 +104,7 @@ def main():
     for key, path in (("customer", "/redirect.html"), ("admin", "/admin/redirect.html")):
         patch(apps[key]["id"], {
             "signInAudience": "AzureADMyOrg",
-            "spa": {"redirectUris": [HOST + path]},
+            "spa": {"redirectUris": portal_redirect_uris(apps[key], key, path)},
             "requiredResourceAccess": [{
                 "resourceAppId": apps["api"]["appId"],
                 "resourceAccess": [{"id": scope_id, "type": "Scope"}],

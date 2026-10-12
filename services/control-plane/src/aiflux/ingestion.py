@@ -69,6 +69,31 @@ def extract_safety(records: Any) -> list[tuple[str, str]]:
     ]
 
 
+def extract_usage(records: Any) -> dict[str, Any] | None:
+    events = [
+        metadata for metadata in trace_metadata(records)
+        if metadata.get("category") == "usage"
+    ]
+    if not events:
+        return None
+    if len(events) != 1:
+        raise ValueError("Provider usage trace must be unique")
+    payload = events[0].get("payload")
+    if not isinstance(payload, str):
+        raise ValueError("Provider usage trace payload is invalid")
+    usage = json.loads(payload)
+    if not isinstance(usage, dict) or usage.get("schema") != "finops-v1":
+        raise ValueError("Provider usage trace schema is invalid")
+    if not isinstance(usage.get("model"), str) or not usage["model"]:
+        raise ValueError("Provider usage trace model is invalid")
+    attempts = nonnegative(usage.get("attempts"), "attempts")
+    if attempts not in (1, 2):
+        raise ValueError("Provider usage trace attempts is invalid")
+    for field in ("input_tokens", "output_tokens", "cached_input_tokens", "cache_write_tokens"):
+        usage[field] = nonnegative(usage.get(field), field)
+    return usage
+
+
 def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> int:
     count = 0
     for source in rows:
@@ -88,10 +113,13 @@ def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> in
         if not isinstance(occurred, datetime):
             raise ValueError("Native usage timestamp is invalid")
         occurred = aware(occurred)
-        actual_model = source.get("model") or source.get("deployment") or ""
+        usage = extract_usage(source.get("trace_records"))
+        actual_model = (
+            (usage["model"] if usage else None) or source.get("model") or source.get("deployment") or ""
+        )
         identifiers = {
             value
-            for value in (source.get("model"), source.get("deployment"))
+            for value in (source.get("model"), source.get("deployment"), usage["model"] if usage else None)
             if isinstance(value, str) and value
         }
         matches = [
@@ -118,10 +146,10 @@ def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> in
         row.model, row.provider, row.region = alias, provider, region
         row.status_code = nonnegative(source.get("status_code"), "status_code") or 0
         row.e2e_ms = nonnegative(source.get("e2e_ms"), "e2e_ms")
-        row.input_tokens = nonnegative(source.get("input_tokens"), "input_tokens")
-        row.output_tokens = nonnegative(source.get("output_tokens"), "output_tokens")
-        row.cached_input_tokens = None
-        row.cache_write_tokens = None
+        row.input_tokens = nonnegative((usage or source).get("input_tokens"), "input_tokens")
+        row.output_tokens = nonnegative((usage or source).get("output_tokens"), "output_tokens")
+        row.cached_input_tokens = usage["cached_input_tokens"] if usage else None
+        row.cache_write_tokens = usage["cache_write_tokens"] if usage else None
         row.ttft_ms = None
         row.ingested_at = datetime.now(UTC)
         with db.no_autoflush:
@@ -135,6 +163,8 @@ def ingest_rows(db: Session, rows: list[dict[str, Any]], catalog: Catalog) -> in
             metadata.get("retry") == "transient_backend"
             for metadata in trace_metadata(source.get("trace_records"))
         ):
+            row.cost, row.completeness = None, "retry_usage_unknown"
+        if source.get("multiple_backend_requests") is True or (usage and usage["attempts"] > 1):
             row.cost, row.completeness = None, "retry_usage_unknown"
         row.currency = price.currency if price and row.cost is not None else None
         for category, action in extract_safety(source.get("trace_records")):
@@ -188,14 +218,25 @@ def run_once(settings: Settings, client: LogsQueryClient) -> int:
         raise ValueError("Ingestion batch, row limit and initial lookback must be positive")
     if settings.ingestion_overlap_minutes < 0 or settings.ingestion_delay_minutes < 0:
         raise ValueError("Ingestion overlap and delay must be nonnegative")
+    cutoff = settings.ingestion_start_at
+    if cutoff is not None:
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("Ingestion activation cutoff requires an explicit timezone")
+        cutoff = aware(cutoff)
     catalog = Catalog.load(settings.catalog_path)
     now = datetime.now(UTC)
     ceiling = now - timedelta(minutes=settings.ingestion_delay_minutes)
     with Session(engine_for(settings.database_url)) as db:
         state = db.get(IngestionState, "native-llm")
-        watermark = aware(state.watermark) if state else now - timedelta(days=settings.ingestion_initial_days)
+        watermark = aware(state.watermark) if state else (
+            cutoff if cutoff is not None else now - timedelta(days=settings.ingestion_initial_days)
+        )
+        if state and cutoff is not None and watermark < cutoff:
+            raise ValueError("Activation cutoff exceeds existing watermark; explicit reconciliation required")
         # Replay preceding windows to recover late-arriving LLM records and missing usage.
         start = watermark - timedelta(minutes=settings.ingestion_overlap_minutes)
+        if cutoff is not None:
+            start = max(start, cutoff)
         end = min(watermark + timedelta(minutes=settings.ingestion_batch_minutes), ceiling)
         if end <= start:
             return 0

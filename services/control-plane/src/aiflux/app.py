@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -18,8 +18,8 @@ from aiflux.auth import Principal, TokenVerifier, get_admin, get_principal
 from aiflux.catalog import Catalog
 from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for, get_db
-from aiflux.finops import aware, usage_csv, usage_response
-from aiflux.models import Member, ModelPrice, Organization, SafetyEvent, TeamSubscription
+from aiflux.finops import aware, create_price, usage_csv, usage_response
+from aiflux.models import Base, Member, ModelPrice, Organization, SafetyEvent, TeamSubscription
 from aiflux.schemas import (
     CatalogOutput,
     EnabledRequest,
@@ -135,6 +135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(503, "Required identity/database configuration is incomplete")
         with engine_for(settings.database_url).connect() as connection:
             connection.execute(text("SELECT 1"))
+            for table in Base.metadata.sorted_tables:
+                connection.execute(select(literal(1)).select_from(table).limit(1))
         return {"status": "ready"}
 
     @app.get("/api/me", response_model=IdentityOutput)
@@ -150,10 +152,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (OSError, ValueError, ValidationError) as exc:
             log.error("Catalog configuration invalid type=%s", type(exc).__name__)
             raise HTTPException(503, "Model catalog is unavailable") from exc
+        if settings.gateway_max_completion_tokens is not None:
+            for model in catalog.models:
+                if model.max_completion_tokens is not None:
+                    model.max_completion_tokens = min(
+                        model.max_completion_tokens, settings.gateway_max_completion_tokens
+                    )
         items = [
-            model.model_dump(include={"id", "provider", "capabilities", "enabled"})
+            model.model_dump(
+                include={"id", "provider", "capabilities", "enabled", "placeholder", "max_completion_tokens"}
+            )
             for model in catalog.models
-            if model.enabled
+            if model.enabled or model.placeholder
         ]
         return {"items": items, "total": len(items)}
 
@@ -449,23 +459,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/admin/prices", status_code=201, response_model=PriceOutput)
     def add_price(payload: PriceCreate, principal: Admin, db: Db) -> dict:
-        rows = db.scalars(
-            select(ModelPrice)
-            .where(
-                ModelPrice.model == payload.model,
-                ModelPrice.provider == payload.provider,
-                ModelPrice.region == payload.region,
-            )
-            .with_hint(ModelPrice, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
-        ).all()
-        for price in rows:
-            if (payload.effective_to is None or aware(price.effective_from) < payload.effective_to) and (
-                price.effective_to is None or payload.effective_from < aware(price.effective_to)
-            ):
-                raise HTTPException(409, "Price periods must not overlap")
-        row = ModelPrice(**payload.model_dump())
-        db.add(row)
-        db.flush()
+        try:
+            row, _ = create_price(db, payload)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         audit(db, principal, "price.created", row.id)
         db.commit()
         return price_dict(row)

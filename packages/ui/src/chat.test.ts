@@ -37,7 +37,8 @@ describe("chatCompletion streaming", () => {
     expect(r.usage?.total_tokens).toBe(5);
     expect(seen!.url).toBe("https://gw.test/v1/chat/completions");
     const headers = seen!.init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer sk-test");
+    expect(headers["Ocp-Apim-Subscription-Key"]).toBe("sk-test");
+    expect(headers.Authorization).toBeUndefined();
     expect(seen!.init.cache).toBe("no-store");
     const body = JSON.parse(seen!.init.body as string);
     expect(body.stream).toBe(true);

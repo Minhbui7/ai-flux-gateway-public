@@ -161,6 +161,10 @@ resource "azapi_resource" "dev_openai_policy" {
         completion_token_limit  = var.dev_openai_max_completion_tokens
         safety_threshold        = var.dev_openai_content_safety_threshold
         safety_backend_id       = azapi_resource.dev_content_safety_backend[0].name
+        unified                 = false
+        product_id              = azurerm_api_management_product.dev_openai[0].product_id
+        cors_origins            = []
+        model_list              = jsonencode({ object = "list", data = [for alias in sort(tolist(local.dev_aliases)) : { id = alias, object = "model", owned_by = "aiflux" }] })
       }) : file("${path.module}/../../gateway/policies/disabled.xml")
     }
   }
@@ -180,12 +184,13 @@ resource "azapi_resource" "closed_policy" {
     properties = {
       format = "rawxml"
       value = templatefile("${path.module}/../../gateway/policies/global-dev-gate.xml.tftpl", {
-        dev_api_id = azurerm_api_management_api.dev_openai.name
-        enabled    = var.dev_openai_inference_enabled
+        dev_api_id      = azurerm_api_management_api.dev_openai.name
+        enabled         = var.dev_openai_inference_enabled
+        unified_enabled = var.dev_unified_inference_enabled
       })
     }
   }
-  depends_on = [azapi_resource.dev_openai_policy]
+  depends_on = [azapi_resource.dev_openai_policy, azapi_resource.dev_unified_policy]
 }
 
 resource "azapi_resource" "blocked_api_policy" {

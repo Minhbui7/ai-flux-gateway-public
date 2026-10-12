@@ -12,9 +12,11 @@
         "properties": {
           "id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$"},
           "provider": {"type": "string", "minLength": 1},
-          "backend_model": {"type": "string", "minLength": 1},
+          "backend_model": {"type": "string"},
           "region": {"type": "string", "minLength": 1},
           "enabled": {"type": "boolean"},
+          "placeholder": {"type": "boolean", "default": false},
+          "max_completion_tokens": {"type": ["integer", "null"], "minimum": 1},
           "capabilities": {
             "type": "array",
             "uniqueItems": true,
@@ -67,7 +69,13 @@
               "max_response_tokens": {"type": "integer", "minimum": 1}
             }
           }
-        }
+        },
+        "allOf": [
+          {"if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+           "then": {"properties": {"backend_model": {"minLength": 1}, "placeholder": {"const": false}}}},
+          {"if": {"properties": {"placeholder": {"const": true}}, "required": ["placeholder"]},
+           "then": {"properties": {"enabled": {"const": false}, "capabilities": {"maxItems": 0}}}}
+        ]
       }
     }
   }

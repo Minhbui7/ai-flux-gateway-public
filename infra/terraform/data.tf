@@ -1,13 +1,14 @@
 resource "azurerm_mssql_server" "main" {
-  count                         = local.sql_stage ? 1 : 0
-  name                          = "${local.prefix}-sql"
-  resource_group_name           = local.rg
-  location                      = local.sql_location
-  version                       = "12.0"
-  minimum_tls_version           = "1.2"
-  public_network_access_enabled = var.sql_public_network_access_enabled
-  connection_policy             = var.hybrid_private_data_enabled ? "Proxy" : "Default"
-  tags                          = local.tags
+  count                                    = local.sql_stage ? 1 : 0
+  name                                     = "${local.prefix}-sql"
+  resource_group_name                      = local.rg
+  location                                 = local.sql_location
+  version                                  = "12.0"
+  minimum_tls_version                      = "1.2"
+  public_network_access_enabled            = var.sql_public_network_access_enabled
+  connection_policy                        = var.hybrid_private_data_enabled ? "Proxy" : "Default"
+  express_vulnerability_assessment_enabled = var.sql_express_vulnerability_assessment_enabled
+  tags                                     = local.tags
   identity {
     type = "SystemAssigned"
   }

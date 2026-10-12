@@ -1,8 +1,10 @@
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -18,6 +20,7 @@ class Settings(BaseSettings):
     bootstrap_object_id: str = ""
     required_scope: str = "access_as_user"
     gateway_url: str = ""
+    gateway_max_completion_tokens: int | None = Field(default=None, ge=1, le=100000)
     apim_resource_id: str = ""
     apim_product_id: str = "aiflux"
     log_workspace_id: str = ""
@@ -31,6 +34,7 @@ class Settings(BaseSettings):
     ingestion_batch_minutes: int = 60
     ingestion_delay_minutes: int = 5
     ingestion_max_rows: int = 10000
+    ingestion_start_at: datetime | None = None
 
     def identity_errors(self) -> list[str]:
         errors = []

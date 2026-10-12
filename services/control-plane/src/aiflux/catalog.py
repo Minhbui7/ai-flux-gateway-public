@@ -18,6 +18,8 @@ class ModelEntry(BaseModel):
     provider: str = Field(min_length=1, max_length=60)
     capabilities: list[str]
     enabled: bool
+    placeholder: bool = False
+    max_completion_tokens: int | None = Field(default=None, ge=1)
     backend_model: str = ""
     region: str = ""
     backends: list[BackendEntry] = Field(default_factory=list)
@@ -32,6 +34,8 @@ class Catalog(BaseModel):
         data = cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
         if len({model.id for model in data.models}) != len(data.models):
             raise ValueError("Catalog contains duplicate model aliases")
+        if any(model.enabled and model.placeholder for model in data.models):
+            raise ValueError("Catalog placeholders cannot be enabled")
         backend_ids = [backend.id for model in data.models for backend in model.backends]
         if len(set(backend_ids)) != len(backend_ids):
             raise ValueError("Catalog contains duplicate backend endpoint IDs")

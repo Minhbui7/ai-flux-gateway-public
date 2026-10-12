@@ -16,14 +16,14 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         cls.dev_source = (POLICIES / "dev-openai.xml.tftpl").read_text(encoding="utf-8")
         cls.openapi = json.loads((ROOT / "gateway" / "openapi-dev.json").read_text(encoding="utf-8"))
         cls.apim_source = (ROOT / "infra" / "terraform" / "apim.tf").read_text(encoding="utf-8")
+        cls.adapter_source = (ROOT / "infra" / "terraform" / "dev-unified.tf").read_text(encoding="utf-8")
         cls.variables_source = (ROOT / "infra" / "terraform" / "variables.tf").read_text(encoding="utf-8")
 
     def test_policy_is_subscription_product_scoped(self):
         inbound = self.dev_policy.find("inbound")
-        self.assertEqual(inbound[0].tag, "base")
         policy = ET.tostring(inbound, encoding="unicode")
         self.assertIn("context.Product.Id", policy)
-        self.assertIn("aiflux-dev-openai", policy)
+        self.assertIn("${product_id}", policy)
         self.assertIn('subscription_required = true', self.apim_source)
         self.assertIn('header = "Ocp-Apim-Subscription-Key"', self.apim_source)
         self.assertIn('query  = "subscription-key"', self.apim_source)
@@ -46,6 +46,21 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertNotIn('"stream"', self.openapi["paths"]["/chat/completions"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"])
         self.assertNotIn("text/event-stream", self.openapi["paths"]["/chat/completions"]["post"]["responses"]["200"]["content"])
 
+    def test_adapter_allows_ten_sql_owned_team_subscriptions(self):
+        self.assertIn('subscriptions_limit   = 10', self.adapter_source)
+        self.assertIn('subscription_required = true', self.adapter_source)
+        self.assertIn('approval_required     = true', self.adapter_source)
+
+    def test_adapter_completion_ceiling_matches_catalog_and_schema(self):
+        adapter = json.loads((ROOT / "gateway" / "openapi-dev-adapter.json").read_text())
+        body = adapter["paths"]["/chat/completions"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        self.assertEqual(body["properties"]["max_completion_tokens"]["maximum"], 100000)
+        self.assertIn("var.dev_unified_max_completion_tokens", self.adapter_source)
+        self.assertIn("var.dev_unified_tpm_limit", self.adapter_source)
+        catalog = json.loads((ROOT / "gateway" / "catalog" / "dev-models.json").read_text())
+        self.assertTrue(all(model["max_completion_tokens"] == 100000
+                            for model in catalog["models"] if model["enabled"]))
+
     def test_openapi_import_is_bounded_and_default_backend_is_non_routable(self):
         self.assertEqual(set(self.openapi["paths"]), {"/models", "/chat/completions"})
         self.assertEqual(self.openapi["servers"][0]["url"], "https://aiflux-disabled.invalid")
@@ -56,7 +71,7 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertIn('service_url           = "https://aiflux-disabled.invalid"', self.apim_source)
         backend = self.dev_policy.find("./backend")
         self.assertEqual([child.tag for child in backend], ["retry"])
-        self.assertEqual(backend.find("./retry/forward-request").get("timeout"), "45")
+        self.assertEqual(backend.find("./retry/forward-request").get("timeout"), "${unified ? 240 : 45}")
 
     def test_only_buffered_transient_model_errors_are_retried_once(self):
         retry = self.dev_policy.find("./backend/retry")
@@ -67,8 +82,8 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertNotIn("403", retry.get("condition"))
         self.assertEqual(retry.find("forward-request").get("buffer-request-body"), "true")
         self.assertEqual(retry.find("forward-request").get("buffer-response"), "true")
-        self.assertEqual(len(retry.findall("./choose/when/set-backend-service")), 2)
-        failed = self.dev_policy.find("./outbound/choose/when")
+        self.assertEqual(len(retry.findall("./choose/when/set-backend-service")), 3)
+        failed = next(node for node in self.dev_policy.findall("./outbound/choose/when") if "StatusCode >= 500" in node.get("condition", ""))
         self.assertEqual(failed.find("./return-response/set-status").get("code"), "503")
 
     def test_original_redacted_and_completion_safety_are_present(self):
@@ -114,12 +129,14 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
     def test_non_dev_apis_remain_globally_denied(self):
         gate = self.global_gate.find("./inbound/choose/when")
         self.assertIsNotNone(gate)
-        self.assertIn('context.Request.OriginalUrl.Path != "/dev/v1/models"', gate.get("condition"))
-        self.assertIn('context.Request.OriginalUrl.Path != "/dev/v1/chat/completions"', gate.get("condition"))
-        self.assertIn("${enabled} == false", gate.get("condition"))
+        self.assertIn('context.Request.OriginalUrl.Path == "/dev/v1/models"', gate.get("condition"))
+        self.assertIn('context.Request.OriginalUrl.Path == "/dev/v1/chat/completions"', gate.get("condition"))
+        self.assertIn("${enabled}", gate.get("condition"))
+        self.assertIn("${unified_enabled}", gate.get("condition"))
+        self.assertNotIn('== "/llm/v1/models"', gate.get("condition"))
         self.assertEqual(self.global_gate.findall(".//base"), [])
         self.assertIn("set-status", [node.tag for node in gate.iter()])
-        self.assertIn("depends_on = [azapi_resource.dev_openai_policy]", self.apim_source)
+        self.assertIn("azapi_resource.dev_unified_policy]", self.apim_source)
         self.assertIn('format = "rawxml"', self.apim_source)
 
     def test_prompt_and_completion_body_logging_is_not_enabled(self):
@@ -178,6 +195,27 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         )
         self.assertEqual(self.dev_policy.find("./on-error/return-response/set-status").get("code"), "503")
         self.assertNotIn("context.LastError.Message", self.dev_source)
+
+    def test_anthropic_normalization_precedes_mandatory_output_safety(self):
+        outbound = self.dev_policy.find("outbound")
+        normalize = outbound.find(".//set-body[@id='aiflux-anthropic-normalization']")
+        self.assertIsNotNone(normalize)
+        safety = outbound.find(".//llm-content-safety")
+        self.assertIsNotNone(safety)
+        nodes = list(outbound.iter())
+        self.assertLess(nodes.index(normalize), nodes.index(safety))
+        self.assertEqual(outbound.findall(".//return-response")[-1].find("set-status").get("code"), "503")
+        self.assertNotIn("AnthropicResponseShape", self.dev_source)
+        self.assertNotIn("Inspecting Anthropic response block", self.dev_source)
+        errors = self.dev_policy.findall("./on-error/choose/when")
+        rejection = next(node for node in errors
+                         if 'PolicyId == "aiflux-anthropic-normalization"' in node.get("condition", ""))
+        self.assertEqual(rejection.find("./return-response/set-status").get("code"), "503")
+        self.assertIn('"code":"provider_response_invalid"', rejection.find("./return-response/set-body").text)
+        self.assertEqual(
+            {node.get("name"): node.get("value") for node in rejection.findall("./trace/metadata")},
+            {"category": "ProviderResponse", "action": "rejected"},
+        )
 
 
 if __name__ == "__main__":

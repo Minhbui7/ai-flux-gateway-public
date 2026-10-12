@@ -383,8 +383,9 @@ run "disabled_posture" {
   }
   assert {
     condition = !azurerm_linux_function_app.ingestion[0].enabled && azapi_resource.closed_policy.body.properties.value == templatefile("${path.module}/../../gateway/policies/global-dev-gate.xml.tftpl", {
-      dev_api_id = azurerm_api_management_api.dev_openai.name
-      enabled    = false
+      dev_api_id      = azurerm_api_management_api.dev_openai.name
+      unified_enabled = false
+      enabled         = false
     })
     error_message = "The inference/Function release gates must remain disabled."
   }
@@ -573,6 +574,7 @@ run "development_inference_requires_explicit_safety_configuration" {
     condition     = !var.dev_openai_inference_enabled && var.dev_openai_content_safety_threshold == null && !output.inference_enabled
     error_message = "Development inference must remain off until explicitly enabled with an approved content-safety threshold."
   }
+
   assert {
     condition     = azurerm_api_management_api.dev_openai.subscription_required && azapi_resource.dev_openai_policy.body.properties.value == file("${path.module}/../../gateway/policies/disabled.xml")
     error_message = "The staged development API must remain subscription-required and fail closed by default."
@@ -580,5 +582,77 @@ run "development_inference_requires_explicit_safety_configuration" {
   assert {
     condition     = length(azurerm_api_management_product.dev_openai) == 0 && length(azapi_resource.dev_model_backend) == 0 && length(azapi_resource.dev_model_pool) == 0 && length(azapi_resource.dev_content_safety_backend) == 0
     error_message = "No development product or inference backend may be created while the safety approval gate is unset."
+  }
+}
+
+run "approved_adapter_token_limits" {
+  command = plan
+  variables {
+    dev_unified_tpm_limit             = 20000
+    dev_unified_max_completion_tokens = 100000
+  }
+  assert {
+    condition     = var.dev_unified_tpm_limit == 20000 && var.dev_unified_max_completion_tokens == 100000 && var.dev_openai_tpm_limit == 2048 && var.dev_openai_max_completion_tokens == 64
+    error_message = "Approved adapter limits must not change the legacy development route's limits."
+  }
+}
+
+run "reject_adapter_tpm_above_approved_limit" {
+  command = plan
+  variables {
+    dev_unified_tpm_limit = 20001
+  }
+  expect_failures = [var.dev_unified_tpm_limit]
+}
+
+run "reject_adapter_completion_above_approved_limit" {
+  command = plan
+  variables {
+    dev_unified_max_completion_tokens = 100001
+  }
+  expect_failures = [var.dev_unified_max_completion_tokens]
+}
+
+run "ingestion_stays_disabled_by_default" {
+  command = plan
+  assert {
+    condition     = !azurerm_linux_function_app.ingestion[0].enabled && azurerm_linux_function_app.ingestion[0].app_settings["AIFLUX_CATALOG_CONFIGURED"] == "false"
+    error_message = "Creating the Function must not enable ingestion before explicit readiness acceptance."
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].site_config[0].app_command_line == null
+    error_message = "Price bootstrap must not run during ordinary API deployments."
+  }
+}
+
+run "price_bootstrap_requires_accepted_development" {
+  command = plan
+  variables {
+    dev_price_bootstrap_enabled = true
+  }
+  expect_failures = [var.dev_price_bootstrap_enabled]
+}
+
+run "ingestion_requires_verified_deployment" {
+  command = plan
+  variables {
+    ingestion_enabled = true
+  }
+  expect_failures = [azurerm_linux_function_app.ingestion]
+}
+
+run "ingestion_immutable_container_configuration" {
+  command = plan
+  variables {
+    ingestion_container_image = "test.azurecr.io/aiflux/ingestion@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    ingestion_start_at        = "2026-10-13T00:00:00Z"
+  }
+  assert {
+    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].application_stack[0].docker[0].image_name == "aiflux/ingestion@sha256" && azurerm_linux_function_app.ingestion[0].site_config[0].application_stack[0].docker[0].image_tag == "0000000000000000000000000000000000000000000000000000000000000000"
+    error_message = "Function image configuration must reconstruct exactly one sha256 digest separator."
+  }
+  assert {
+    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].container_registry_use_managed_identity && azurerm_role_assignment.acr_pull["ingestion"].role_definition_name == "AcrPull"
+    error_message = "Function registry access must use scoped managed identity, not publishing credentials."
   }
 }

@@ -1,5 +1,73 @@
 # Hybrid development Terraform and local operator runbook
 
+## Current development repair (2026-10-12)
+
+This status supersedes the historical partial-deployment notes below.
+The live App Service plan is B1 and is preserved by explicit user direction;
+no P1v3 upgrade, additional compute, public data endpoint or certificate change
+was made. SQL's live enabled express vulnerability assessment is preserved too.
+API `/ready` is 200 with private SQL. SQL, Key Vault and Function storage remain
+public-disabled. The existing Function is now enabled with the accepted development
+catalog, immutable Python v1 binding container, and five-minute ingestion timer.
+Live scheduled executions advance private SQL state; the three-model SingtelIDS
+pilot reconciles provider counters, Monitor, SQL and portal showback without
+duplicate overlap records. Five effective-dated USD price rules are installed.
+The temporary price-import startup gate is disabled after successful seeding.
+The completed SingtelIDS workload reconciles all 68 successful requests, 4,974
+input tokens, 780,312 output tokens and USD 15.15973620 estimated inference cost.
+No estimate is incomplete and overlap replay preserves totals. See the
+control-plane runbook for per-model rates, accounting and the excluded charges.
+Readiness now verifies all application tables with constant-only projections.
+The signed-in database 503 was traced to SQL Server-invalid Boolean approval
+predicates (`IS 1`); the fixed API image uses `= 1`. Live synthetic lookup confirms
+the organization query executes and unapproved access is denied. The user
+subsequently confirmed subscription reconciliation, key reveal and both provider
+playground responses after the subscription-cap repair: basic customer acceptance
+is complete, without changing private data or the B1 compute posture.
+
+The approved `dev_direct_portals_enabled` stopgap makes the three web origins
+public while retaining Entra/approved-membership authorization, disabled basic
+publishing auth and independently operator-restricted SCM. It does not authorize
+`public-edge` release and cannot be combined with that stage.
+`dev_portal_origins` supplies only the two exact HTTPS App Service origins.
+Portal images must be built with the direct API `/api` and APIM
+`/dev/llm/v1` URLs, plus the existing dedicated SPA IDs and tenant authority.
+Runtime `CONTROL_ORIGIN`/`GATEWAY_ORIGIN` must match those compiled URLs.
+After image/settings updates, explicitly restart the three apps if probes still
+see old assets/CSP; management-plane image readback alone is not serving-state proof.
+
+`dev_unified_inference_enabled` creates the separately labeled guarded APIM
+text adapter/product after the existing OpenAI deployment gate and a live ARM
+read of the succeeded primary-region Haiku deployment. It provisions no new
+model deployment. `dev_catalog_accepted` must stay false until actual guarded
+OpenAI and Anthropic completions pass; enabling it selects the bundled development
+catalog and the adapter product for control-plane-created team keys.
+The production catalog/product are still blocked.
+The adapter product allows the user-approved 10 subscriptions, not one: SQL-owned
+team subscriptions share APIM's ownerless per-user cap. Suspended synthetic test
+subscriptions still consume slots and must be deleted after acceptance. A failed
+team provision remains SQL-owned; use portal Reconcile after fixing APIM rather
+than creating duplicate requests. The original single-key `/dev/v1` product and
+each adapter subscription's inference bounds are unchanged.
+
+Use the existing protected local state and ignored deployed inputs. Review the
+full saved plan before applying; no `-target`. Pin all three successful ACR build
+outputs by digest, specifying both subscription and resource group explicitly
+to avoid shared CLI defaults. Final edge TLS, native translation and
+full safety/failover acceptance remain separate backlog items.
+
+For the user-approved larger adapter limits, the active inputs set
+`dev_unified_tpm_limit=20000` and `dev_unified_max_completion_tokens=100000`.
+The four existing GlobalStandard OpenAI deployments use capacity 120 (120,000
+backend TPM each), not reserved provisioned compute: available regional quota was
+checked before increasing allocation. This headroom accommodates Azure's estimated
+request accounting for a 100,000-token completion budget plus the bounded prompt;
+the APIM per-subscription/model throttle remains 20,000 TPM.
+Apply `infra\models` changes with `-parallelism=1`: concurrent deployment writes
+under the same Foundry account returned `RequestConflict` (409); a refreshed full
+plan and serialized retry completed the remaining updates. No model/SKU change,
+new compute, public data access or production/native-route enablement was made.
+
 ## Decision, status and ownership
 
 Development uses **public app endpoints, Basic v2 APIM and Entra authorization**,
@@ -20,7 +88,7 @@ those governance-disabled interfaces. In the East US `10.240.0.0/16` VNet,
 Each has its matching private DNS zone linked to this VNet with registration
 disabled: `privatelink.database.windows.net`, `privatelink.vaultcore.azure.net`,
 and `privatelink.{blob,queue,table}.core.windows.net`.
-API and disabled ingestion Function alone integrate outbound through
+API and ingestion Function alone integrate outbound through
 `10.240.4.0/24`, delegated to `Microsoft.Web/serverFarms`. Customer/admin apps
 remain uninvolved. Public app/SCM access restrictions and the existing App Gateway
 subnet's `Microsoft.Web` service endpoint are retained.
@@ -33,7 +101,7 @@ requires 1433–65535, **not** the public-endpoint 11000–11999 rule. Integrati
 allows TCP 1433/443 to the data subnet and denies other ports to it; normal Azure
 DNS and existing public egress remain unchanged (no route-all/NAT requirement).
 
-The P1v3 dedicated Linux Function uses managed-identity host storage with
+The existing B1 dedicated Linux Function uses managed-identity host storage with
 `content_share_force_disabled = true`; no Azure Files content share or connection
 string is configured, so no paid File endpoint is provisioned. Reassess this only
 if the deployment model actually adds an Azure Files share. Provider refresh has
@@ -218,9 +286,10 @@ operator acceptance of app restrictions, authorization, SQL connectivity, certif
 WAF configuration and backend checks. First edge creation necessarily needs **post**
 creation TLS/probe/WAF checks too; the flag is not evidence of a running WAF.
 Do not claim those live checks have passed before the edge exists.
-The APIM Product stays unpublished, both API/global policies deny, the catalog is
-unconfigured and the Function host is disabled in **all** stages. No flag enables
-inference. Models and native API implementation remain a separate release.
+By default the production APIM Product stays unpublished, its API/global policies
+deny, the catalog is unconfigured and the Function host is disabled in all stages.
+The separately approved development adapter and ingestion flags require their
+own live acceptance; they do not release the production/native API.
 Deferring Language blocks `public-edge` even with live approval. Deferring SQL
 blocks both runtime stages. `gateway_origin_hostname` configures the candidate
 HTTPS URL before edge provisioning; it does not advertise a live endpoint.
@@ -252,7 +321,7 @@ continues to protect the database.
   `Microsoft.Web` service endpoint and the explicit operator `/32`. This is public
   service-endpoint routing, **not Private Link**. The operator is an intentional
   direct-access exception; test denied untrusted-origin/SCM access live before release.
-  The disabled Function allows only that operator `/32`.
+  The Function allows only that operator `/32`, whether enabled or disabled.
 - AI protection endpoints remain public; Key Vault is private in hybrid mode.
   Identity/RBAC authorization is still required. AI local/key auth is disabled. Basic v2
   has **no deterministic dedicated outbound IP**: do not fabricate an APIM outbound
@@ -418,8 +487,13 @@ Validate runtime SQL login and `/ready` 200; `/health` is liveness,
 Function MI settings include keyless Blob/Queue/Table endpoints and the shared runtime
 contract. Package ingestion code/dependencies/catalog and ODBC Driver 18 with an
 authenticated immutable package mechanism, no SAS/account key. Keep the host disabled
-until package execution, storage/SQL permissions, metadata/watermark semantics and native
-release gates are reviewed. Resource-scoped Monitor, AI, certificate and ACR roles remain.
+until actual binding registration, package execution, storage/SQL permissions,
+metadata/watermark semantics and the selected gateway's telemetry gates are reviewed.
+For the accepted development adapter, set `ingestion_enabled` and
+`ingestion_timer_enabled` with an immutable `ingestion_container_image` and explicit
+timezone-aware `ingestion_start_at`. Registering the host alone is insufficient:
+verify scheduled timer execution and exact native/SQL/reporting reconciliation.
+Resource-scoped Monitor, AI, certificate and ACR roles remain.
 API's APIM custom role grants team subscription operations only, not policy/service write.
 
 Before release, test from the operator and an untrusted public client: Entra/membership
