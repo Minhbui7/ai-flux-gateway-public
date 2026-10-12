@@ -1,0 +1,65 @@
+name: Validate AIFLUX
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check services/control-plane/src tests/unit
+      - run: mypy
+      - run: pytest -q tests/unit tests/contract
+      - name: Validate migrations
+        env:
+          AIFLUX_DATABASE_URL: sqlite:///migration-check.db
+        run: |
+          alembic -c services/control-plane/alembic.ini upgrade head
+          alembic -c services/control-plane/alembic.ini downgrade base
+          alembic -c services/control-plane/alembic.ini upgrade head
+  portals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.5"
+      - run: terraform -chdir=infra/models fmt -check
+      - run: terraform -chdir=infra/models init -backend=false -input=false
+      - run: terraform -chdir=infra/models validate
+      - run: terraform -chdir=infra/operator fmt -check -recursive
+      - run: terraform -chdir=infra/operator init -backend=false -input=false
+      - run: terraform -chdir=infra/operator validate
+      - run: terraform -chdir=infra/operator test
+      - run: terraform -chdir=infra/terraform fmt -check -recursive
+      - run: terraform -chdir=infra/terraform init -backend=false -input=false
+      - run: terraform -chdir=infra/terraform validate
+      - run: terraform -chdir=infra/terraform test
+      - run: terraform -chdir=infra/state fmt -check -recursive
+      - run: terraform -chdir=infra/state init -backend=false -input=false
+      - run: terraform -chdir=infra/state validate
+      - run: terraform -chdir=infra/state test
+      - run: python gateway/tools/validate_bundle.py
+      - run: python -m unittest discover -s tests/contract -p "test_gateway*.py"

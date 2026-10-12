@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "status": "not_run",
+  "note": "Acceptance requirements, not test results. Record metadata only; never include prompts, completions, keys or entity spans.",
+  "gates": {
+    "native_iac": [
+      "Export reviewed native unified API artifact with official ARM contract and exact API version",
+      "Terraform reproducibly creates aliases/translation/models endpoint, updates it, and removes it in an approved disposable environment",
+      "No undocumented type/format/model schema, policy, local-exec portal automation or adapter"
+    ],
+    "subscription_bearer": [
+      "OpenAI SDK bearer-only key authenticates through native APIM subscription validation",
+      "Missing, invalid, revoked, wrong-product, expired/suspended subscriptions fail",
+      "Conflicting bearer/header credentials fail; query credentials fail without secret logging",
+      "Product-scoped and all-access subscriptions cannot bypass API/global policy",
+      "Backend capture proves no customer key forwarded"
+    ],
+    "public_edge_origin": [
+      "Public WAF_v2 HTTPS AppGW, DNS, matching Key Vault certificate and renewal path validated",
+      "HTTPS backend SNI, 200 health probes, WAF request inspection and timeout/cancellation validated",
+      "App Service and SCM deny untrusted public origins while allowing AppGW Microsoft.Web service endpoint and explicit reviewed operator /32",
+      "Entra-only SQL allows only reviewed operator and actual App Service outbound IPv4 rules, never 0.0.0.0 AllowAzureServices",
+      "Public AI/Key Vault/storage require identity/RBAC; no shared keys or anonymous data access",
+      "Before inference release, native APIM origin control live-proves direct public bypass denial while allowing AppGW; deny-all remains until then",
+      "Basic v2 outbound IP is not assumed deterministic; authenticated model endpoints verified",
+      "Edge cache disabled, request buffering on, SSE response buffering off and WAF no-sensitive-log behavior validated"
+    ],
+    "pii_structure_unicode": [
+      "All accepted user-bearing roles/history including system/developer/assistant text inspected",
+      "Tool descriptions, free-text arguments, tool results and assistant tool-call history inspected",
+      "Sensitive typed/schema-bound values fail closed rather than breaking contracts",
+      "Overlap-aware chunks obey Language document/batch limits",
+      "Unicode supplementary characters, combining marks, span merge and boundary overlaps preserve JSON structure",
+      "Controlled provider capture proves no tested original PII reaches a model endpoint"
+    ],
+    "pii_fail_closed": [
+      "Timeout, 429, 5xx, malformed/partial document results and language failures reject",
+      "Oversized/unsupported/multimodal content rejects without bypass"
+    ],
+    "original_redacted_safety": [
+      "Original input checked in request-local memory before PII redaction",
+      "Redacted forwarded input checked separately",
+      "Every configured harm threshold exercises allowed and blocked boundary cases"
+    ],
+    "prompt_shields": [
+      "Direct and context injection fixtures checked on original and forwarded input",
+      "Shields dependency failures reject; limitations disclosed"
+    ],
+    "response_safety": [
+      "Unsafe ordinary text rejected before buffered response leaves APIM",
+      "Moderation timeout/429/5xx/malformed dependency responses fail closed",
+      "No response deanonymization"
+    ],
+    "sse_sliding_window": [
+      "Timestamped incremental OpenAI SDK events prove live streaming, not full-response buffering",
+      "Overlapping boundary violation stops subsequent events",
+      "Moderation error stops stream; after delivery no fabricated HTTP 403",
+      "Client cancellation and incomplete usage visible; partial stream never retried/resumed"
+    ],
+    "tools_inspection": [
+      "Tools/tool_choice/parallel calls, definitions, results, assistant history translate without dropping fields",
+      "PII and safety inspect arguments including stream delta boundaries",
+      "IDs/types/schema keys preserved; unsafe typed values reject",
+      "No tool execution; unfinished tool arguments treated as failure"
+    ],
+    "json_schema_inspection": [
+      "Strict JSON schema/output formats translate for every advertised provider",
+      "PII redaction preserves field types/schema keys/contracts",
+      "Response moderation inspects nested/string values and streamed JSON",
+      "Incomplete JSON/blocked stream not reported as a successful schema-valid result"
+    ],
+    "model_region_access": [
+      "Each configured deployment/provider/version and commercial eligibility confirmed",
+      "Public TLS connectivity and endpoint authentication verified for every pool member without hardcoded Basic v2 outbound IPs",
+      "Only proved capability/model combinations advertised; unavailable formats explicitly reject"
+    ],
+    "pool_retry_after": [
+      "Equivalent deployments only; no silent model substitution",
+      "Equal priority/weight approximate distribution observed across healthy peers",
+      "429 Retry-After seconds/date and long intervals respected; circuit recovery demonstrated",
+      "Fallback/transient bounded retries only before response content",
+      "Exhausted pool returns explicit error/retry guidance; no retry for auth/validation/safety failures"
+    ],
+    "subscription_model_limits": [
+      "Explicit IDS RPM/TPM/quota period/value/max-response-token configuration supplied",
+      "Counter isolation between subscriptions/models and model-only counters demonstrated",
+      "Sequential limit/error/Retry-After results and measured concurrent overshoot recorded",
+      "Streaming token estimates and distributed gateway-local counters documented"
+    ],
+    "metadata_correlation": [
+      "Validated CorrelationId joins GatewayLogs and GatewayLlmLog without customer-supplied attribution",
+      "Actual selected backend endpoint, alias, provider and model region emitted from trusted selection",
+      "Pool ID or gateway Region not substituted for actual backend region",
+      "Token semantics, retries, delayed duplicates, safety stops and cancellations reconciled",
+      "Unknown cache-token/TTFT/retry usage remains missing, not zero or latency proxy"
+    ],
+    "no_sensitive_logs": [
+      "All HTTP/LLM diagnostic message capture disabled or omitted",
+      "Known synthetic payload/key markers absent from all enabled sinks including failure paths",
+      "WAF matched-value/access URL logs not enabled without independently proved sanitization",
+      "No raw APIM traces/debug credentials/entity mappings/provider secrets/customer keys persisted"
+    ]
+  }
+}

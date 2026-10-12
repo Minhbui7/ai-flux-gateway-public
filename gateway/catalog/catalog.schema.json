@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AIFLUX reviewed model catalog",
+  "type": "object",
+  "required": ["models"],
+  "properties": {
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "provider", "capabilities", "enabled", "backend_model"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$"},
+          "provider": {"type": "string", "minLength": 1},
+          "backend_model": {"type": "string"},
+          "region": {"type": "string", "minLength": 1},
+          "enabled": {"type": "boolean"},
+          "placeholder": {"type": "boolean", "default": false},
+          "max_completion_tokens": {"type": ["integer", "null"], "minimum": 1},
+          "capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"enum": ["chat", "stream", "tools", "json_schema"]}
+          },
+          "backends": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "region", "url", "api_format", "priority", "weight", "auth"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "region": {"type": "string", "minLength": 1},
+                "url": {"type": "string", "format": "uri", "pattern": "^https://"},
+                "api_format": {"enum": ["openai-chat-completions", "anthropic-messages"]},
+                "priority": {"type": "integer", "minimum": 1, "maximum": 100},
+                "weight": {"type": "integer", "minimum": 1, "maximum": 100},
+                "model": {"type": "string", "minLength": 1},
+                "provider": {"type": "string", "minLength": 1},
+                "auth": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["managed_identity_resource"],
+                      "properties": {"managed_identity_resource": {"type": "string", "minLength": 1}},
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["key_vault_secret_id", "header"],
+                      "properties": {
+                        "key_vault_secret_id": {"type": "string", "pattern": "^https://[^/]+\\.vault\\.azure\\.net/secrets/"},
+                        "header": {"type": "string", "minLength": 1}
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "required": ["rpm", "tpm", "token_quota", "quota_period", "max_response_tokens"],
+            "properties": {
+              "rpm": {"type": "integer", "minimum": 1},
+              "tpm": {"type": "integer", "minimum": 1},
+              "token_quota": {"type": "integer", "minimum": 1},
+              "quota_period": {"enum": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"]},
+              "max_response_tokens": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "allOf": [
+          {"if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+           "then": {"properties": {"backend_model": {"minLength": 1}, "placeholder": {"const": false}}}},
+          {"if": {"properties": {"placeholder": {"const": true}}, "required": ["placeholder"]},
+           "then": {"properties": {"enabled": {"const": false}, "capabilities": {"maxItems": 0}}}}
+        ]
+      }
+    }
+  }
+}

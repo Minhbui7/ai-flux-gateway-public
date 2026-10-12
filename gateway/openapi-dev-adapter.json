@@ -1,0 +1,62 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AIFLUX guarded text development adapter",
+    "version": "0.1.0",
+    "description": "Explicit OpenAI/Anthropic text adapter, not APIM native unified-model translation. Streaming, tools and structured output are not supported."
+  },
+  "servers": [{"url": "https://aiflux-disabled.invalid"}],
+  "security": [{"apimSubscriptionHeader": []}],
+  "paths": {
+    "/models": {
+      "get": {
+        "operationId": "models",
+        "responses": {"200": {"description": "The three approved development aliases"}, "401": {"description": "Subscription required"}}
+      }
+    },
+    "/chat/completions": {
+      "post": {
+        "operationId": "chat",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["model", "messages", "max_completion_tokens"],
+                "properties": {
+                  "model": {"type": "string", "enum": ["gpt-5.6-luna", "gpt-5.6-sol", "claude-haiku-5-5"]},
+                  "stream": {"type": "boolean", "enum": [false]},
+                  "max_completion_tokens": {"type": "integer", "minimum": 1, "maximum": 100000},
+                  "messages": {
+                    "type": "array", "minItems": 1, "maxItems": 25,
+                    "items": {
+                      "type": "object", "additionalProperties": false, "required": ["role", "content"],
+                      "properties": {
+                        "role": {"type": "string", "enum": ["system", "developer", "user", "assistant"]},
+                        "content": {"type": "string", "minLength": 1, "maxLength": 4800}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "OpenAI-compatible choices, finish reason and token usage"},
+          "400": {"description": "Unsupported request"},
+          "401": {"description": "Subscription required"},
+          "403": {"description": "Product or content safety rejection"},
+          "415": {"description": "JSON required"},
+          "429": {"description": "Development rate limit"},
+          "503": {"description": "Inspection or backend unavailable"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {"apimSubscriptionHeader": {"type": "apiKey", "in": "header", "name": "Ocp-Apim-Subscription-Key"}}
+  }
+}

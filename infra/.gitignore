@@ -1,0 +1,17 @@
+.tools/
+.sql-init/
+.tls-edge/
+**/.terraform/
+**/*.tfstate*
+**/*.tfplan
+**/crash.log
+**/*.tfvars
+**/backend.hcl
+**/backend_override.tf
+**/provider-schema.json
+**/live-evidence.json
+**/live-identity.json
+**/dev-acceptance.json
+**/dev-bearer-probe.json
+**/pii-batch-acceptance.json
+!**/*.tfvars.example

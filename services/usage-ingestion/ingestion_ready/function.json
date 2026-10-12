@@ -1,0 +1,19 @@
+{
+  "scriptFile": "../handlers.py",
+  "entryPoint": "ingestion_ready",
+  "bindings": [
+    {
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "request",
+      "authLevel": "function",
+      "methods": ["get"],
+      "route": "ingestion-ready"
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "$return"
+    }
+  ]
+}

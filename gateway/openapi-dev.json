@@ -1,0 +1,196 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AIFLUX guarded development text API",
+    "version": "0.1.0",
+    "description": "Subscriber-only OpenAI-compatible text subset. The default backend is intentionally non-routable; APIM policies must pass all gates and select a verified backend."
+  },
+  "servers": [
+    {
+      "url": "https://aiflux-disabled.invalid"
+    }
+  ],
+  "security": [
+    {
+      "apimSubscriptionHeader": []
+    }
+  ],
+  "paths": {
+    "/models": {
+      "get": {
+        "operationId": "models",
+        "summary": "List the guarded development model aliases",
+        "responses": {
+          "200": {
+            "description": "Approved aliases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["object", "data"],
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": ["list"]
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "object", "owned_by"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "enum": ["gpt-5.6-luna", "gpt-5.6-sol"]
+                          },
+                          "object": {
+                            "type": "string",
+                            "enum": ["model"]
+                          },
+                          "owned_by": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "APIM subscription is required"
+          },
+          "403": {
+            "description": "Approved development product subscription is required"
+          },
+          "503": {
+            "description": "Gateway or model access is unavailable"
+          }
+        }
+      }
+    },
+    "/chat/completions": {
+      "post": {
+        "operationId": "chat",
+        "summary": "Create a guarded text completion",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["model", "messages", "max_completion_tokens"],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "enum": ["gpt-5.6-luna", "gpt-5.6-sol"]
+                  },
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 25,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["role", "content"],
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": ["system", "developer", "user", "assistant"]
+                        },
+                        "content": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4800
+                        }
+                      }
+                    }
+                  },
+                  "max_completion_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OpenAI-compatible chat completion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["choices", "usage"],
+                  "properties": {
+                    "choices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "message": {
+                            "type": "object",
+                            "properties": {
+                              "content": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "prompt_tokens": {
+                          "type": "integer"
+                        },
+                        "completion_tokens": {
+                          "type": "integer"
+                        },
+                        "total_tokens": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "APIM subscription is required"
+          },
+          "403": {
+            "description": "Content safety or product subscription check blocked the request"
+          },
+          "413": {
+            "description": "Request body exceeds the development limit"
+          },
+          "415": {
+            "description": "Only JSON request bodies are accepted"
+          },
+          "429": {
+            "description": "Request or token rate limit exceeded"
+          },
+          "503": {
+            "description": "PII inspection, gateway, or model access is unavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apimSubscriptionHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Ocp-Apim-Subscription-Key"
+      }
+    }
+  }
+}

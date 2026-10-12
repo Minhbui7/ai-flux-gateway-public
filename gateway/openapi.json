@@ -1,0 +1,66 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AIFLUX disabled gateway surface",
+    "version": "0.1.0",
+    "description": "Contract of the disabled subscription-required placeholder only. No successful inference/model discovery is implemented. Native unified API and bearer authentication require reviewed live evidence."
+  },
+  "servers": [{"url": "/v1"}],
+  "security": [{"apimSubscriptionHeader": []}],
+  "paths": {
+    "/models": {
+      "get": {
+        "operationId": "models",
+        "responses": {
+          "401": {"description": "Native APIM subscription validation failed"},
+          "503": {"$ref": "#/components/responses/Disabled"}
+        }
+      }
+    },
+    "/chat/completions": {
+      "post": {
+        "operationId": "chat",
+        "description": "Unconditionally disabled; no body is forwarded to a model.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"type": "object"}}}
+        },
+        "responses": {
+          "401": {"description": "Native APIM subscription validation failed"},
+          "503": {"$ref": "#/components/responses/Disabled"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apimSubscriptionHeader": {"type": "apiKey", "in": "header", "name": "Ocp-Apim-Subscription-Key"}
+    },
+    "responses": {
+      "Disabled": {
+        "description": "Native capability unverified; inference is not available",
+        "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}},
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["error"],
+              "properties": {
+                "error": {
+                  "type": "object",
+                  "required": ["message", "type", "param", "code"],
+                  "properties": {
+                    "message": {"type": "string"},
+                    "type": {"type": "string", "enum": ["service_unavailable"]},
+                    "param": {"type": "string", "nullable": true},
+                    "code": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

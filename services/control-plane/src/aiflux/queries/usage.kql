@@ -1,0 +1,26 @@
+let gateway =
+    ApiManagementGatewayLogs
+    | where TimeGenerated >= datetime({start}) and TimeGenerated < datetime({end})
+    | where _ResourceId =~ {resource}
+    | where ProductId == {product} and OperationId in ("chat", "chat-completions")
+    | summarize arg_max(TimeGenerated, *) by CorrelationId
+    | project correlation_id=CorrelationId, subscription_id=ApimSubscriptionId,
+              occurred_at=TimeGenerated, status_code=ResponseCode, e2e_ms=TotalTime,
+              backend_id=BackendId, gateway_region=Region, resource_id=_ResourceId,
+              trace_records=TraceRecords;
+let llm =
+    ApiManagementGatewayLlmLog
+    | where TimeGenerated >= datetime({start}) and TimeGenerated < datetime({end})
+    | where _ResourceId =~ {resource}
+    | summarize input_tokens=max(PromptTokens), output_tokens=max(CompletionTokens),
+                model=take_any(ModelName), deployment=take_any(DeploymentName),
+                backend_requests=make_set_if(RequestId, isnotempty(RequestId), 2) by CorrelationId
+    | project correlation_id=CorrelationId, model, deployment, input_tokens, output_tokens,
+              multiple_backend_requests=array_length(backend_requests) > 1;
+gateway
+| join kind=leftouter llm on correlation_id
+| project correlation_id, subscription_id, occurred_at, status_code, e2e_ms,
+          backend_id, gateway_region, resource_id, model, deployment,
+          input_tokens, output_tokens, multiple_backend_requests, trace_records
+| order by occurred_at asc
+| take {row_limit}

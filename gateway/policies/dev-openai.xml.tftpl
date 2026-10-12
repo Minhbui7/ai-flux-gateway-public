@@ -1,0 +1,480 @@
+<policies>
+  <inbound>
+%{ if unified ~}
+    <cors allow-credentials="false" terminate-unmatched-request="true">
+      <allowed-origins>
+%{ for origin in cors_origins ~}
+        <origin>${origin}</origin>
+%{ endfor ~}
+      </allowed-origins>
+      <allowed-methods><method>GET</method><method>POST</method></allowed-methods>
+      <allowed-headers><header>Content-Type</header><header>Ocp-Apim-Subscription-Key</header></allowed-headers>
+      <expose-headers><header>Retry-After</header></expose-headers>
+    </cors>
+%{ endif ~}
+    <base />
+    <choose>
+      <when condition='@(context.Subscription == null || context.Product == null || context.Product.Id != "${product_id}")'>
+        <return-response>
+          <set-status code="403" reason="Development product subscription required" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"An approved development product subscription is required.","type":"invalid_request_error","param":null,"code":"subscription_scope_required"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Request.Headers.ContainsKey("Ocp-Apim-Subscription-Key") &amp;&amp; context.Request.Headers.ContainsKey("Authorization"))'>
+        <return-response>
+          <set-status code="400" reason="Conflicting authentication methods" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-body>{"error":{"message":"Supply either a subscription-key header or bearer authentication, not both.","type":"invalid_request_error","param":null,"code":"conflicting_credentials"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Request.Url.Query.Keys.Any())'>
+        <return-response>
+          <set-status code="400" reason="Unsupported query parameter" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-body>{"error":{"message":"Query parameters are not supported by the development API.","type":"invalid_request_error","param":null,"code":"unsupported_query_parameter"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-query-parameter name="subscription-key" exists-action="delete" />
+    <choose>
+      <when condition='@(context.Request.Method == "GET")'>
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>${model_list}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.Request.Method == "POST")'>
+        <choose>
+          <when condition='@{
+            var contentType = context.Request.Headers.GetValueOrDefault("Content-Type", "");
+            var delimiter = contentType.IndexOf(";");
+            if (delimiter >= 0) { contentType = contentType.Substring(0, delimiter).Trim(); }
+            return !string.Equals(contentType, "application/json", StringComparison.OrdinalIgnoreCase);
+          }'>
+            <return-response>
+              <set-status code="415" reason="Unsupported Media Type" />
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-body>{"error":{"message":"This development API accepts application/json text chat requests only.","type":"invalid_request_error","param":"Content-Type","code":"unsupported_media_type"}}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <validate-content id="aiflux-request-validation" unspecified-content-type-action="prevent" max-size="16384" size-exceeded-action="prevent">
+          <content type="application/json" validate-as="json" action="prevent" />
+        </validate-content>
+        <set-variable name="aiflux-request-json" value='@(context.Request.Body.As&lt;string&gt;(preserveContent: true))' />
+        <choose>
+          <when condition='@{
+            var body = JObject.Parse((string)context.Variables["aiflux-request-json"]);
+            var messages = body["messages"] as JArray;
+            if (body.Properties().Any(p => !(p.Name == "model" || p.Name == "messages" || p.Name == "max_completion_tokens" || (${unified} &amp;&amp; p.Name == "stream")))) { return true; }
+            if (body["stream"] != null &amp;&amp; (body["stream"].Type != JTokenType.Boolean || (bool)body["stream"])) { return true; }
+            if (messages == null || messages.Count == 0 || messages.Count > 25) { return true; }
+            if (body["max_completion_tokens"] == null || body["max_completion_tokens"].Type != JTokenType.Integer || !((int)body["max_completion_tokens"] >= 1) || (int)body["max_completion_tokens"] > ${completion_token_limit}) { return true; }
+            var totalCharacters = 0;
+            foreach (var message in messages) {
+              if (!(message is JObject)) { return true; }
+              var item = (JObject)message;
+              if (item.Properties().Any(p => !(p.Name == "role" || p.Name == "content"))) { return true; }
+              if (item["role"] == null || item["role"].Type != JTokenType.String) { return true; }
+              var role = (string)item["role"];
+              if (!(role == "system" || role == "developer" || role == "user" || role == "assistant")) { return true; }
+              if (item["content"] == null || item["content"].Type != JTokenType.String) { return true; }
+              var text = (string)item["content"];
+              if (text.Length == 0 || text.Length > 4800) { return true; }
+              totalCharacters += text.Length;
+            }
+            if (totalCharacters > 8000) { return true; }
+            var model = body["model"];
+            if (model != null &amp;&amp; model.Type == JTokenType.String &amp;&amp; (string)model == "claude-haiku-5-5" &amp;&amp; !messages.Any(m => (string)m["role"] == "user" || (string)m["role"] == "assistant")) { return true; }
+            return model == null || model.Type != JTokenType.String || !((string)model == "gpt-5.6-luna" || (string)model == "gpt-5.6-sol" || (${unified} &amp;&amp; (string)model == "claude-haiku-5-5"));
+          }'>
+            <return-response>
+              <set-status code="400" reason="Unsupported request shape" />
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+              <set-body>{"error":{"message":"Only bounded non-streaming text messages, approved model aliases, and max_completion_tokens up to ${completion_token_limit} are supported. Tools, images, structured output, streaming, and extra fields are not accepted.","type":"invalid_request_error","param":null,"code":"unsupported_request_shape"}}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="aiflux-model" value='@((string)JObject.Parse((string)context.Variables["aiflux-request-json"])["model"])' />
+        <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@("rpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
+        <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" retry-after-variable-name="aiflux-token-retry-after" />
+        <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
+          <categories output-type="EightSeverityLevels">
+            <category name="Hate" threshold="${safety_threshold}" />
+            <category name="SelfHarm" threshold="${safety_threshold}" />
+            <category name="Sexual" threshold="${safety_threshold}" />
+            <category name="Violence" threshold="${safety_threshold}" />
+          </categories>
+        </llm-content-safety>
+        <set-variable name="aiflux-redacted-documents" value="[]" />
+%{ for batch in range(5) ~}
+        <choose>
+          <when condition='@(((JArray)JObject.Parse((string)context.Variables["aiflux-request-json"])["messages"]).Count > ${batch * 5})'>
+        <send-request mode="new" response-variable-name="aiflux-pii" timeout="10" ignore-error="false">
+          <set-url>${language_endpoint}/language/:analyze-text?api-version=2026-05-01</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-body><![CDATA[@{
+            var request = JObject.Parse((string)context.Variables["aiflux-request-json"]);
+            var messages = (JArray)request["messages"];
+            var documents = new JArray();
+            for (var i = ${batch * 5}; i < Math.Min(${batch * 5 + 5}, messages.Count); i++) {
+              documents.Add(new JObject {
+                ["id"] = i.ToString(),
+                ["language"] = "en",
+                ["text"] = (string)((JObject)messages[i])["content"]
+              });
+            }
+            var piiRequest = new JObject {
+              ["kind"] = "PiiEntityRecognition",
+              ["parameters"] = new JObject {
+                ["modelVersion"] = "latest",
+                ["loggingOptOut"] = true
+              },
+              ["analysisInput"] = new JObject { ["documents"] = documents }
+            };
+            return piiRequest.ToString();
+          }]]></set-body>
+          <authentication-managed-identity resource="https://cognitiveservices.azure.com/" client-id="${gateway_identity_client}" ignore-error="false" />
+        </send-request>
+        <set-variable name="aiflux-pii-response-json" value='@(((IResponse)context.Variables["aiflux-pii"]).Body.As&lt;string&gt;(preserveContent: true))' />
+        <choose>
+          <when condition='@{
+            var response = (IResponse)context.Variables["aiflux-pii"];
+            if (response == null || response.StatusCode != 200) { return true; }
+            var body = JObject.Parse((string)context.Variables["aiflux-pii-response-json"]);
+            if (body["kind"] == null || (string)body["kind"] != "PiiEntityRecognitionResults") { return true; }
+            var results = body["results"] as JObject;
+            if (results == null || results["errors"] == null || ((JArray)results["errors"]).Count != 0) { return true; }
+            var documents = results["documents"] as JArray;
+            var messages = (JArray)JObject.Parse((string)context.Variables["aiflux-request-json"])["messages"];
+            if (documents == null || documents.Count != Math.Min(5, messages.Count - ${batch * 5})) { return true; }
+            var index = ${batch * 5};
+            foreach (var item in documents) {
+              var document = item as JObject;
+              if (document == null || (string)document["id"] != index.ToString() || document["redactedText"] == null || document["redactedText"].Type != JTokenType.String) { return true; }
+              if (document["warnings"] != null) {
+                if (((JArray)document["warnings"]).Count != 0) { return true; }
+              }
+              index++;
+            }
+            return false;
+          }'>
+            <return-response>
+              <set-status code="503" reason="PII inspection unavailable" />
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+              <set-body>{"error":{"message":"Required PII inspection could not be completed; the request was not forwarded.","type":"service_unavailable","param":null,"code":"pii_inspection_unavailable"}}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="aiflux-redacted-documents" value='@{
+          var accumulated = JArray.Parse((string)context.Variables["aiflux-redacted-documents"]);
+          var pii = JObject.Parse((string)context.Variables["aiflux-pii-response-json"]);
+          foreach (var document in (JArray)pii["results"]["documents"]) {
+            accumulated.Add(new JObject {
+              ["id"] = (string)document["id"],
+              ["redactedText"] = (string)document["redactedText"]
+            });
+          }
+          return accumulated.ToString();
+        }' />
+          </when>
+        </choose>
+%{ endfor ~}
+        <set-body><![CDATA[@{
+          var request = JObject.Parse((string)context.Variables["aiflux-request-json"]);
+          var messages = (JArray)request["messages"];
+          var documents = JArray.Parse((string)context.Variables["aiflux-redacted-documents"]);
+          for (var i = 0; i < messages.Count; i++) {
+            ((JObject)messages[i])["content"] = (string)documents[i]["redactedText"];
+          }
+          return request.ToString();
+        }]]></set-body>
+        <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
+          <categories output-type="EightSeverityLevels">
+            <category name="Hate" threshold="${safety_threshold}" />
+            <category name="SelfHarm" threshold="${safety_threshold}" />
+            <category name="Sexual" threshold="${safety_threshold}" />
+            <category name="Violence" threshold="${safety_threshold}" />
+          </categories>
+        </llm-content-safety>
+        <choose>
+          <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-luna")'>
+            <set-backend-service backend-id="dev-gpt-5-6-luna-pool" />
+          </when>
+          <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-sol")'>
+            <set-backend-service backend-id="dev-gpt-5-6-sol-pool" />
+          </when>
+%{ if unified ~}
+          <when condition='@((string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
+            <set-backend-service backend-id="dev-claude-haiku-5-5-eastus" />
+            <rewrite-uri template="/messages" copy-unmatched-params="false" />
+            <set-header name="anthropic-version" exists-action="override"><value>2023-06-01</value></set-header>
+            <set-body><![CDATA[@{
+              var request = context.Request.Body.As<JObject>(preserveContent: true);
+              var messages = new JArray();
+              var system = new List<string>();
+              foreach (var item in (JArray)request["messages"]) {
+                var role = (string)item["role"];
+                if (role == "system" || role == "developer") { system.Add((string)item["content"]); }
+                else { messages.Add(new JObject { ["role"] = role, ["content"] = (string)item["content"] }); }
+              }
+              var converted = new JObject {
+                ["model"] = "claude-haiku-5-5",
+                ["messages"] = messages,
+                ["max_tokens"] = (int)request["max_completion_tokens"],
+                ["stream"] = false
+              };
+              if (system.Count > 0) { converted["system"] = string.Join("\n\n", system); }
+              return converted.ToString();
+            }]]></set-body>
+          </when>
+%{ endif ~}
+        </choose>
+        <set-header name="Authorization" exists-action="delete" />
+        <set-header name="api-key" exists-action="delete" />
+        <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+        <set-header name="x-aiflux-original-body" exists-action="delete" />
+        <set-header name="x-aiflux-pii-response" exists-action="delete" />
+        <authentication-managed-identity resource="https://cognitiveservices.azure.com/" client-id="${gateway_identity_client}" ignore-error="false" />
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="405" reason="Method Not Allowed" />
+          <set-header name="Allow" exists-action="override"><value>GET, POST</value></set-header>
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-body>{"error":{"message":"Method not allowed.","type":"invalid_request_error","param":null,"code":"method_not_allowed"}}</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <retry condition='@(context.Response != null &amp;&amp; (context.Response.StatusCode == 500 || context.Response.StatusCode == 502 || context.Response.StatusCode == 503 || context.Response.StatusCode == 504))' count="1" interval="1" first-fast-retry="false">
+      <set-variable name="aiflux-backend-attempt" value='@(context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-backend-attempt", 0) + 1)' />
+      <choose>
+        <when condition='@((int)context.Variables["aiflux-backend-attempt"] > 1)'>
+          <trace source="aiflux" severity="information">
+            <message>Retrying a buffered model request after a transient backend failure.</message>
+            <metadata name="retry" value="transient_backend" />
+            <metadata name="previous_status" value='@(context.Response.StatusCode.ToString())' />
+          </trace>
+        </when>
+      </choose>
+      <choose>
+        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-luna")'>
+          <set-backend-service backend-id="dev-gpt-5-6-luna-pool" />
+        </when>
+        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-sol")'>
+          <set-backend-service backend-id="dev-gpt-5-6-sol-pool" />
+        </when>
+%{ if unified ~}
+        <when condition='@((string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
+          <set-backend-service backend-id="dev-claude-haiku-5-5-eastus" />
+        </when>
+%{ endif ~}
+      </choose>
+      <forward-request timeout="${unified ? 240 : 45}" buffer-request-body="true" buffer-response="true" fail-on-error-status-code="false" />
+    </retry>
+  </backend>
+  <outbound>
+    <base />
+%{ if unified ~}
+    <set-header name="x-aiflux-request-id" exists-action="override"><value>@(context.RequestId.ToString())</value></set-header>
+    <choose>
+      <when condition='@(context.Response.StatusCode == 200 &amp;&amp; context.Request.Method == "POST")'>
+        <set-variable name="aiflux-finops-usage" value='@{
+          var response = context.Response.Body.As&lt;JObject&gt;(preserveContent: true);
+          var usage = response["usage"] as JObject;
+          var anthropic = (string)context.Variables["aiflux-model"] == "claude-haiku-5-5";
+          var details = usage != null ? usage["prompt_tokens_details"] as JObject : null;
+          var counters = new JObject {
+            ["input_tokens"] = usage != null ? usage[anthropic ? "input_tokens" : "prompt_tokens"] : null,
+            ["output_tokens"] = usage != null ? usage[anthropic ? "output_tokens" : "completion_tokens"] : null,
+            ["cached_input_tokens"] = anthropic
+              ? (usage != null ? usage["cache_read_input_tokens"] : null)
+              : (details != null ? details["cached_tokens"] : null),
+            ["cache_write_tokens"] = anthropic
+              ? (usage != null ? usage["cache_creation_input_tokens"] : null)
+              : (details != null ? details["cache_write_tokens"] : null)
+          };
+          foreach (var field in counters.Properties()) {
+            int number;
+            if (field.Value.Type != JTokenType.Integer ||
+                !int.TryParse(field.Value.ToString(), out number) || number &lt; 0) {
+              field.Value = JValue.CreateNull();
+            }
+          }
+          counters["schema"] = "finops-v1";
+          counters["model"] = (string)context.Variables["aiflux-model"];
+          counters["attempts"] = (int)context.Variables["aiflux-backend-attempt"];
+          return counters.ToString(Newtonsoft.Json.Formatting.None);
+        }' />
+        <trace source="aiflux" severity="information">
+          <message>Bounded provider usage counters; no request or response content.</message>
+          <metadata name="category" value="usage" />
+          <metadata name="payload" value='@((string)context.Variables["aiflux-finops-usage"])' />
+        </trace>
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Response.StatusCode == 200 &amp;&amp; context.Request.Method == "POST" &amp;&amp; (string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
+        <set-body id="aiflux-anthropic-normalization"><![CDATA[@{
+          var response = context.Response.Body.As<JObject>(preserveContent: true);
+          var content = response["content"] as JArray;
+          var usage = response["usage"] as JObject;
+          if (content == null || content.Count == 0 || usage == null ||
+              response["id"] == null || response["id"].Type != JTokenType.String ||
+              string.IsNullOrWhiteSpace((string)response["id"]) ||
+              usage["input_tokens"] == null || usage["input_tokens"].Type != JTokenType.Integer ||
+              usage["output_tokens"] == null || usage["output_tokens"].Type != JTokenType.Integer ||
+              (int)usage["input_tokens"] < 0 || (int)usage["output_tokens"] < 0 ||
+              (int)usage["output_tokens"] > ${completion_token_limit} ||
+              (int)usage["input_tokens"] > int.MaxValue - (int)usage["output_tokens"]) {
+            throw new Exception("Invalid provider response");
+          }
+          var text = new List<string>();
+          foreach (var item in content) {
+            var block = item as JObject;
+            if (block == null || block["type"] == null || block["type"].Type != JTokenType.String) {
+              throw new Exception("Unsupported provider content");
+            }
+            var type = (string)block["type"];
+            if (type == "text" && block["text"] != null && block["text"].Type == JTokenType.String) {
+              text.Add((string)block["text"]);
+            } else if (type == "thinking" && block["thinking"] != null &&
+                block["thinking"].Type == JTokenType.String && block["signature"] != null &&
+                block["signature"].Type == JTokenType.String &&
+                !string.IsNullOrWhiteSpace((string)block["signature"])) {
+              continue;
+            } else {
+              throw new Exception("Unsupported provider content");
+            }
+          }
+          var answer = string.Join("", text);
+          if (string.IsNullOrWhiteSpace(answer)) {
+            throw new Exception("Missing provider answer");
+          }
+          var reason = response["stop_reason"] != null && response["stop_reason"].Type == JTokenType.String
+            ? (string)response["stop_reason"] : "";
+          if (!(reason == "end_turn" || reason == "stop_sequence" || reason == "max_tokens")) {
+            throw new Exception("Unsupported provider stop reason");
+          }
+          return new JObject {
+            ["id"] = (string)response["id"],
+            ["object"] = "chat.completion",
+            ["created"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["model"] = (string)context.Variables["aiflux-model"],
+            ["choices"] = new JArray(new JObject {
+              ["index"] = 0,
+              ["message"] = new JObject { ["role"] = "assistant", ["content"] = answer },
+              ["finish_reason"] = reason == "max_tokens" ? "length" : "stop"
+            }),
+            ["usage"] = new JObject {
+              ["prompt_tokens"] = (int)usage["input_tokens"],
+              ["completion_tokens"] = (int)usage["output_tokens"],
+              ["total_tokens"] = (int)usage["input_tokens"] + (int)usage["output_tokens"]
+            }
+          }.ToString();
+        }]]></set-body>
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+      </when>
+    </choose>
+    <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+%{ endif ~}
+    <choose>
+      <when condition='@(context.Response.StatusCode >= 500)'>
+        <return-response>
+          <set-status code="503" reason="Model backend unavailable" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"Model backends are temporarily unavailable after the bounded retry budget.","type":"service_unavailable","param":null,"code":"model_backend_unavailable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Request.Method == "POST")'>
+        <llm-content-safety backend-id="${safety_backend_id}" window-size="1000" window-overlap-size="100">
+          <categories output-type="EightSeverityLevels">
+            <category name="Hate" threshold="${safety_threshold}" />
+            <category name="SelfHarm" threshold="${safety_threshold}" />
+            <category name="Sexual" threshold="${safety_threshold}" />
+            <category name="Violence" threshold="${safety_threshold}" />
+          </categories>
+        </llm-content-safety>
+      </when>
+    </choose>
+  </outbound>
+  <on-error>
+    <choose>
+      <when condition='@(context.LastError.Reason == "SubscriptionKeyNotFound" || context.LastError.Reason == "SubscriptionKeyInvalid")'>
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"A valid active subscription key is required.","type":"invalid_request_error","param":null,"code":"invalid_subscription_key"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "aiflux-request-validation")'>
+        <return-response>
+          <set-status code="400" reason="Invalid request" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"The request must match the bounded development JSON schema.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt")'>
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>@(context.Variables.ContainsKey("aiflux-token-retry-after") &amp;&amp; context.Variables["aiflux-token-retry-after"] is int ? ((int)context.Variables["aiflux-token-retry-after"]).ToString() : context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
+          <set-body>{"error":{"message":"The subscription model limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "ContentSafetyPolicyViolated")'>
+        <trace source="aiflux" severity="information">
+          <message>Required content safety policy rejected the request or response.</message>
+          <metadata name="category" value="ContentSafety" />
+          <metadata name="action" value="blocked" />
+        </trace>
+        <return-response>
+          <set-status code="403" reason="Content safety policy rejected content" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"Required content safety policy rejected the request or response.","type":"invalid_request_error","param":null,"code":"content_safety_rejected"}}</set-body>
+        </return-response>
+      </when>
+%{ if unified ~}
+      <when condition='@(context.LastError.PolicyId == "aiflux-anthropic-normalization")'>
+        <trace source="aiflux" severity="error">
+          <message>Provider response could not be normalized; no answer was released.</message>
+          <metadata name="category" value="ProviderResponse" />
+          <metadata name="action" value="rejected" />
+        </trace>
+        <return-response>
+          <set-status code="503" reason="Invalid provider response" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"The model response did not match the supported text contract; no answer was released.","type":"service_unavailable","param":null,"code":"provider_response_invalid"}}</set-body>
+        </return-response>
+      </when>
+%{ endif ~}
+    </choose>
+    <return-response>
+      <set-status code="503" reason="Gateway inspection or backend unavailable" />
+      <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+      <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+      <set-body>{"error":{"message":"The request could not be safely completed; no inspection or backend details are available.","type":"service_unavailable","param":null,"code":"gateway_unavailable"}}</set-body>
+    </return-response>
+  </on-error>
+</policies>

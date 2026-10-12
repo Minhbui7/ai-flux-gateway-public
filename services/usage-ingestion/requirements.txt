@@ -1,0 +1,2 @@
+# CI assembles a wheel of the root project alongside this file before deployment.
+./wheels/aiflux_control_plane-0.1.0-py3-none-any.whl

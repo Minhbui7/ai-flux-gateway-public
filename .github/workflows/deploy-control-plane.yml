@@ -1,0 +1,14 @@
+name: Control plane deployment (deferred)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    # Public dev uses the local Entra-authenticated operator runbook today.
+    # Re-enable only with reviewed ephemeral /32 SQL/App Service firewall rules
+    # and guaranteed cleanup; never grant all Azure/GitHub runner ranges.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deployment is disabled; follow docs/infrastructure.md locally."

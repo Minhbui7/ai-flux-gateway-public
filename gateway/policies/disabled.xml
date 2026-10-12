@@ -1,0 +1,28 @@
+<policies>
+  <inbound>
+    <return-response>
+      <set-status code="503" reason="Native gateway validation pending" />
+      <set-header name="Content-Type" exists-action="override">
+        <value>application/json</value>
+      </set-header>
+      <set-header name="Cache-Control" exists-action="override">
+        <value>no-store</value>
+      </set-header>
+      <set-body>{"error":{"message":"Inference is disabled until native provisioning, authentication, inspection and routing are verified.","type":"service_unavailable","param":null,"code":"native_capability_unverified"}}</set-body>
+    </return-response>
+  </inbound>
+  <backend />
+  <outbound />
+  <on-error>
+    <return-response>
+      <set-status code="503" reason="Gateway unavailable" />
+      <set-header name="Content-Type" exists-action="override">
+        <value>application/json</value>
+      </set-header>
+      <set-header name="Cache-Control" exists-action="override">
+        <value>no-store</value>
+      </set-header>
+      <set-body>{"error":{"message":"Gateway unavailable.","type":"service_unavailable","param":null,"code":"gateway_unavailable"}}</set-body>
+    </return-response>
+  </on-error>
+</policies>

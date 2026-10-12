@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiflux-control-plane"
+version = "0.1.0"
+description = "Tenant-isolated control plane and usage ingestion for AIFLUX"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn==0.34.3",
+  "sqlalchemy==2.0.41",
+  "alembic==1.16.1",
+  "pydantic-settings==2.9.1",
+  "PyJWT[crypto]==2.10.1",
+  "httpx==0.28.1",
+  "azure-identity==1.23.0",
+  "azure-keyvault-secrets==4.9.0",
+  "acme==4.0.0",
+  "azure-monitor-query==1.4.0",
+  "azure-functions==1.23.0",
+  "pyodbc==5.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.0", "ruff==0.11.13", "mypy==1.16.0"]
+
+[project.scripts]
+aiflux-bootstrap = "aiflux.bootstrap:main"
+aiflux-ingest = "aiflux.ingestion:main"
+
+[tool.setuptools.packages.find]
+where = ["services/control-plane/src"]
+
+[tool.setuptools.package-data]
+aiflux = ["queries/*.kql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.mypy]
+files = ["services/control-plane/src/aiflux"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

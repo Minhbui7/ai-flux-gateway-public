@@ -1,0 +1,49 @@
+# Existing externally owned dev RG. No Azure deployment is implied by this example.
+subscription_id     = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+resource_group_name = "rg-aiflux-fdpo-dev"
+location            = "eastus"
+sql_location        = "australiaeast"
+name_prefix         = "aiflux-fdpo-dev"
+
+# Public Basic v2/protection first; cost/config approval is separate from inference.
+deployment_stage    = "apim"
+gateway_origin_hostname         = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
+deployment_approved = false
+publisher_email     = "ajanakiraman@microsoft.com"
+apim_capacity       = 1
+log_retention_days  = 30
+
+# User-selected platform sizes; region/quota/cost still require live review.
+app_service_sku = "P1v3"
+sql_sku         = "S0"
+sql_enabled     = true
+hybrid_private_data_enabled                    = true
+sql_public_network_access_enabled              = false
+key_vault_public_network_access_enabled        = false
+function_storage_public_network_access_enabled = false
+private_sql_connectivity_accepted              = false
+public_edge_live_gates_approved                = false
+
+# Approved isolated/unpeered hybrid network; no APIM/VM/NAT subnets.
+network = {
+  address_space      = "10.240.0.0/16"
+  app_gateway_subnet = "10.240.1.0/24"
+  private_endpoint_subnet = "10.240.3.0/24"
+  app_service_integration_subnet = "10.240.4.0/24"
+}
+
+# Platform prerequisites: existing Entra, SQL administrator, existing public ACR,
+# and actual SHA-256-pinned api/customer/admin images. Never put secrets here.
+# operator_ip must be your reviewed current public IPv4 (no CIDR), e.g. supplied
+# in this ignored file only. No default broad firewall exception is created.
+# Hybrid mode needs no sql_firewall_ipv4s. Verify private DNS/TCP from the
+# integrated API, grant contained SQL identities, and run migrations through
+# an approved private execution route before accepting private SQL connectivity.
+
+# Public-edge prerequisites: existing versionless Key Vault certificate secret URI,
+# vault ID, timeout/WAF limits/zones, and explicit public_edge_live_gates_approved.
+# Candidate, NOT verified DNS/certificate:
+#   dns_label       = "aiflux-gateway-dev"
+#   origin_hostname = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
+# ACME HTTP-01 bootstrap/automated renewal is planned, not implemented or issued.
+# Product, Function and inference remain disabled in every stage.

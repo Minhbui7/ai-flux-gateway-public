@@ -1,0 +1,5 @@
+# Copy as ignored backend_override.tf ONLY when migrating protected local state
+# from a host with approved private blob connectivity and data-plane authorization.
+terraform {
+  backend "azurerm" {}
+}

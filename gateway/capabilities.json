@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "inference_enabled": false,
+  "product_published": false,
+  "native_artifact": null,
+  "attestation": null,
+  "models": [],
+  "gates": {
+    "native_iac": "unverified",
+    "subscription_bearer": "unverified",
+    "public_edge_origin": "unverified",
+    "pii_structure_unicode": "unverified",
+    "pii_fail_closed": "unverified",
+    "original_redacted_safety": "unverified",
+    "prompt_shields": "unverified",
+    "response_safety": "unverified",
+    "sse_sliding_window": "unverified",
+    "tools_inspection": "unverified",
+    "json_schema_inspection": "unverified",
+    "model_region_access": "unverified",
+    "pool_retry_after": "unverified",
+    "subscription_model_limits": "unverified",
+    "metadata_correlation": "unverified",
+    "no_sensitive_logs": "unverified"
+  },
+  "telemetry": {
+    "prompt_tokens": "documented_live_unverified",
+    "completion_tokens": "documented_live_unverified",
+    "total_tokens": "documented_live_unverified",
+    "gateway_e2e_ms": "documented_live_unverified",
+    "selected_endpoint": "unverified",
+    "cached_read_tokens": "unsupported_native_log",
+    "cache_write_tokens": "unsupported_native_log",
+    "ttft_ms": "unsupported_native_log",
+    "retry_consumed_tokens": "incomplete"
+  }
+}
