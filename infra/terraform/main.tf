@@ -97,7 +97,7 @@ resource "azurerm_key_vault" "main" {
   public_network_access_enabled = var.key_vault_public_network_access_enabled
   tags                          = local.tags
   network_acls {
-    bypass         = "None"
+    bypass         = "AzureServices"
     default_action = "Allow"
   }
   depends_on = [terraform_data.approval]
