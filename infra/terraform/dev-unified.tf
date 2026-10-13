@@ -97,7 +97,7 @@ resource "azapi_resource" "dev_unified_policy" {
         safety_backend_id       = azapi_resource.dev_content_safety_backend[0].name
         unified                 = true
         product_id              = azurerm_api_management_product.dev_unified[0].product_id
-        cors_origins            = var.dev_portal_origins
+        cors_origins            = distinct(concat(var.dev_portal_origins, [for h in [var.gateway_origin_hostname] : "https://${h}" if h != ""]))
         model_list              = jsonencode({ object = "list", data = [for alias in local.dev_unified_aliases : { id = alias, object = "model", owned_by = "aiflux" }] })
       })
     }

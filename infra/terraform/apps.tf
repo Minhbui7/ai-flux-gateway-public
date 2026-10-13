@@ -15,7 +15,7 @@ locals {
     AIFLUX_LOG_WORKSPACE_ID       = azurerm_log_analytics_workspace.main.workspace_id
     AIFLUX_CATALOG_PATH           = var.dev_direct_portals_enabled ? "/app/gateway/catalog/dev-models.json" : var.catalog_container_path
     AIFLUX_CATALOG_CONFIGURED     = tostring(var.dev_catalog_accepted)
-    AIFLUX_CORS_ORIGINS           = jsonencode(var.dev_direct_portals_enabled ? var.dev_portal_origins : [])
+    AIFLUX_CORS_ORIGINS           = jsonencode(var.dev_direct_portals_enabled ? distinct(concat(var.dev_portal_origins, ["https://${var.gateway_origin_hostname}"])) : [])
     AIFLUX_ACME_CHALLENGE_ENABLED = tostring(var.acme_http01_enabled)
     }, var.dev_direct_portals_enabled ? {
     AIFLUX_GATEWAY_MAX_COMPLETION_TOKENS = tostring(var.dev_unified_max_completion_tokens)
