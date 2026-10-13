@@ -113,6 +113,19 @@ instead requires `private_sql_connectivity_accepted` after actual identity grant
 migrations and live API/Function SQL acceptance, independently of
 `public_edge_live_gates_approved`. Both remain false for deployment. Management
 plane endpoint approval/DNS records do **not** prove application readiness.
+
+### Microsoft SFI / MISE compliance for App Service API
+
+To fulfill Microsoft Secure Future Initiative (SFI) requirements for Entra ID Application
+Registrations (specifically App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4` / `aiflux-fdpo-dev-api`),
+the control-plane API supports MISE (Microsoft Identity Service Essentials) authentication:
+- **App Service Sidecar**: Configured via `mise_sidecar_enabled = true` in Terraform, which attaches
+  the official `mcr.microsoft.com/entra-sdk/auth-sidecar:latest` sidecar container to the API Linux Web App
+  via `Microsoft.Web/sites/sitecontainers`. The sidecar listens on port 8081 (`http://127.0.0.1:8081/Validate`)
+  and handles token validation with full OneCollector `s2svalidation_counter` telemetry.
+- **Client Telemetry Fallback**: If running without the sidecar, direct key discovery via `PyJWKClient`
+  emits compliant MISE 2.4.1 client headers (`User-Agent: MISE_Python/2.4.1`, `x-client-SKU: MISE_Python`,
+  `x-client-VER: 2.4.1`, `x-app-id: <client_id>`) to satisfy eSTS key-discovery telemetry audits.
 The API uses its managed identity against APIM ARM to manage subscription keys;
 do not invent Key Vault named values for Basic v2 APIM, which cannot reach this
 private vault. Existing vault role assignments do not establish APIM reachability.

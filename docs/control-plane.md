@@ -64,6 +64,15 @@ request. An IDS role is only accepted in the configured home tenant. Customer
 requests cannot select another organization's context via headers or query
 parameters.
 
+### MISE token validation and Microsoft SFI compliance
+
+Under Microsoft Secure Future Initiative (SFI) guidelines and MISE Compliance KPI requirements,
+the control-plane API (`aiflux-fdpo-dev-api`, App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4`)
+supports compliant token authentication:
+- **MISE Sidecar validation**: When deployed on Azure App Service with sidecar support (`AIFLUX_MISE_VALIDATION_ENDPOINT=http://127.0.0.1:8081/Validate`), token verification delegates via loopback HTTP to the Microsoft Entra ID authentication sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar:latest`). The sidecar performs token validation and emits OneCollector client telemetry (`s2svalidation_counter`).
+- **Telemetry-compliant key discovery fallback**: In environments without the sidecar (such as local development and automated testing), direct eSTS key discovery through `PyJWKClient` includes compliant MISE client telemetry headers: `User-Agent: MISE_Python/2.4.1`, `x-client-SKU: MISE_Python`, `x-client-VER: 2.4.1`, `x-app-id: <client_id>`, and `x-client-current-telemetry: 2|1001,0|<client_id>,0|`.
+- **Loopback isolation**: `AIFLUX_MISE_VALIDATION_ENDPOINT` is strictly validated to ensure only local loopback endpoints (`127.0.0.1`, `localhost`, `::1`) and the `/Validate` path are accepted, preventing arbitrary remote token egress.
+
 Configure `AIFLUX_CORS_ORIGINS` as a JSON array of exact portal origins when they
 are hosted separately. Same-origin deployment needs no CORS allowance.
 

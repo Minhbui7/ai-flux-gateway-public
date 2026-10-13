@@ -487,6 +487,12 @@ variable "catalog_container_path" {
   default     = "/app/gateway/catalog/models.json"
 }
 
+variable "mise_sidecar_enabled" {
+  description = "Enable Microsoft Entra ID MISE authentication sidecar container on the control plane API."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
