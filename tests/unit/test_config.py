@@ -30,3 +30,48 @@ def test_production_managed_identity_database_configuration():
         home_tenant_id="11111111-1111-4111-8111-111111111111",
     )
     assert settings.identity_errors() == []
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "valid"),
+    [
+        ("http://127.0.0.1:8081/Validate", True),
+        ("http://localhost:8081/Validate", True),
+        ("http://[::1]:8081/Validate", True),
+        ("https://127.0.0.1:8081/Validate", True),
+        ("http://10.0.0.1:8081/Validate", False),
+        ("http://remote-server.com/Validate", False),
+        ("http://127.0.0.1:8081/not-validate", False),
+        ("ftp://127.0.0.1:8081/Validate", False),
+    ],
+)
+def test_mise_endpoint_loopback_validation(endpoint, valid):
+    settings = Settings(
+        database_url="sqlite:///test.db",
+        entra_audience="api://test",
+        home_tenant_id="11111111-1111-4111-8111-111111111111",
+        mise_validation_endpoint=endpoint,
+    )
+    errors = settings.identity_errors()
+    if valid:
+        assert not errors
+    else:
+        assert any("mise_validation_endpoint" in err for err in errors)
+
+
+def test_entra_client_id_validation():
+    valid = Settings(
+        database_url="sqlite:///test.db",
+        entra_audience="api://test",
+        home_tenant_id="11111111-1111-4111-8111-111111111111",
+        entra_client_id="26f09831-946d-4dd3-874a-9d573ec7e4f4",
+    )
+    assert not valid.identity_errors()
+
+    invalid = Settings(
+        database_url="sqlite:///test.db",
+        entra_audience="api://test",
+        home_tenant_id="11111111-1111-4111-8111-111111111111",
+        entra_client_id="not-a-uuid",
+    )
+    assert any("entra_client_id" in err for err in invalid.identity_errors())

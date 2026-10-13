@@ -2,6 +2,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import Field
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     ingestion_delay_minutes: int = 5
     ingestion_max_rows: int = 10000
     ingestion_start_at: datetime | None = None
+    mise_validation_endpoint: str | None = None
 
     def identity_errors(self) -> list[str]:
         errors = []
@@ -46,6 +48,23 @@ class Settings(BaseSettings):
                 UUID(self.home_tenant_id)
             except ValueError:
                 errors.append("home_tenant_id must be an Entra tenant UUID")
+        if self.entra_client_id:
+            try:
+                UUID(self.entra_client_id)
+            except ValueError:
+                errors.append("entra_client_id must be an Entra application UUID")
+        if self.mise_validation_endpoint:
+            try:
+                parsed = urlparse(self.mise_validation_endpoint)
+                if parsed.scheme not in ("http", "https"):
+                    errors.append("mise_validation_endpoint must use http or https")
+                hostname = parsed.hostname or ""
+                if hostname not in ("127.0.0.1", "localhost", "::1"):
+                    errors.append("mise_validation_endpoint must be a loopback address")
+                if not parsed.path.rstrip("/").endswith("/Validate"):
+                    errors.append("mise_validation_endpoint must target the /Validate path")
+            except Exception:
+                errors.append("mise_validation_endpoint must be a valid URL")
         if self.environment == "production" and not self.database_url.startswith("mssql+pyodbc://"):
             errors.append("production requires passwordless Azure SQL")
         if self.environment == "production" and self.database_url.startswith("mssql+pyodbc://"):

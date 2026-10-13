@@ -15,8 +15,9 @@ locals {
     AIFLUX_LOG_WORKSPACE_ID       = azurerm_log_analytics_workspace.main.workspace_id
     AIFLUX_CATALOG_PATH           = var.dev_direct_portals_enabled ? "/app/gateway/catalog/dev-models.json" : var.catalog_container_path
     AIFLUX_CATALOG_CONFIGURED     = tostring(var.dev_catalog_accepted)
-    AIFLUX_CORS_ORIGINS           = jsonencode(var.dev_direct_portals_enabled ? distinct(concat(var.dev_portal_origins, ["https://${var.gateway_origin_hostname}"])) : [])
-    AIFLUX_ACME_CHALLENGE_ENABLED = tostring(var.acme_http01_enabled)
+    AIFLUX_CORS_ORIGINS             = jsonencode(var.dev_direct_portals_enabled ? distinct(concat(var.dev_portal_origins, ["https://${var.gateway_origin_hostname}"])) : [])
+    AIFLUX_ACME_CHALLENGE_ENABLED   = tostring(var.acme_http01_enabled)
+    AIFLUX_MISE_VALIDATION_ENDPOINT = var.mise_sidecar_enabled ? "http://127.0.0.1:8081/Validate" : ""
     }, var.dev_direct_portals_enabled ? {
     AIFLUX_GATEWAY_MAX_COMPLETION_TOKENS = tostring(var.dev_unified_max_completion_tokens)
   } : {}) : {}
@@ -103,6 +104,36 @@ resource "azurerm_linux_web_app" "main" {
     failed_request_tracing  = false
   }
   depends_on = [azurerm_role_assignment.acr_pull]
+}
+
+resource "azapi_resource" "api_sidecar" {
+  count     = local.platform_stage && var.mise_sidecar_enabled ? 1 : 0
+  type      = "Microsoft.Web/sites/sitecontainers@2024-04-01"
+  name      = "mise-auth-sidecar"
+  parent_id = azurerm_linux_web_app.main["api"].id
+  body = {
+    properties = {
+      image        = "mcr.microsoft.com/entra-sdk/auth-sidecar:latest"
+      isMain       = false
+      authType     = "Anonymous"
+      targetPort   = "8081"
+      volumeMounts = []
+      environmentVariables = [
+        {
+          name  = "ClientId"
+          value = var.entra.client_id
+        },
+        {
+          name  = "Audience"
+          value = var.entra.audience
+        },
+        {
+          name  = "TenantId"
+          value = var.entra.home_tenant_id
+        }
+      ]
+    }
+  }
 }
 
 resource "azurerm_linux_function_app" "ingestion" {
