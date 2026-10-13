@@ -1,0 +1,188 @@
+<?xml version="1.0" ?>
+<mxfile host="Electron" modified="2026-10-13T01:30:00.000Z" agent="AIFLUX Architect" version="21.0.0" type="device">
+  <diagram id="aiflux-current-arch" name="AIFLUX Current Architecture">
+    <mxGraphModel dx="1600" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" background="#F8FAFC">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t1" value="&lt;b&gt;AIFLUX Hybrid Architecture &amp; Gateway Routing&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;fontSize=20;fontStyle=1;fontColor=#0F172A;" parent="1" vertex="1">
+          <mxGeometry x="40" y="20" width="600" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="t2" value="Current state reflecting latest Key Vault AzureServices bypass, Gateway CORS origins, and guarded /dev/llm/v1 adapter" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;fontSize=12;fontColor=#475569;" parent="1" vertex="1">
+          <mxGeometry x="40" y="50" width="800" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_clients" value="&lt;b&gt;Client Layer &amp; Identity&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#1E293B;verticalAlign=top;align=left;spacingLeft=10;spacingTop=5;" parent="1" vertex="1">
+          <mxGeometry x="40" y="90" width="260" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="usr_web" value="&lt;b&gt;Browser Clients&lt;/b&gt;&lt;br/&gt;Customer &amp; Admin Users&lt;br/&gt;(SPA React Portal)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#E2E8F0;strokeColor=#64748B;" parent="1" vertex="1">
+          <mxGeometry x="60" y="130" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="usr_api" value="&lt;b&gt;API Clients / SDKs&lt;/b&gt;&lt;br/&gt;Direct Dev Inference&lt;br/&gt;(OpenAI-compatible /dev/llm/v1)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#E2E8F0;strokeColor=#64748B;" parent="1" vertex="1">
+          <mxGeometry x="60" y="210" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="id_entra" value="&lt;b&gt;Microsoft Entra ID&lt;/b&gt;&lt;br/&gt;Single-Tenant Auth (PKCE)&lt;br/&gt;App Regs: Customer, Admin, API" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#E0E7FF;strokeColor=#6366F1;fontColor=#3730A3;" parent="1" vertex="1">
+          <mxGeometry x="60" y="290" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_vnet" value="&lt;b&gt;Azure Virtual Network (East US: 10.240.0.0/16)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#0284C7;strokeWidth=2;fontColor=#0369A1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=5;" parent="1" vertex="1">
+          <mxGeometry x="340" y="90" width="780" height="850" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub_appgw" value="&lt;b&gt;Subnet: aiflux-dev-appgw (10.240.1.0/24)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2FE;strokeColor=#38BDF8;fontColor=#0369A1;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;" parent="1" vertex="1">
+          <mxGeometry x="360" y="130" width="360" height="410" as="geometry"/>
+        </mxCell>
+        <mxCell id="appgw_pip" value="&lt;b&gt;Public IP: aiflux-dev-appgw-pip&lt;/b&gt;&lt;br/&gt;DNS: aiflux-gateway-dev.eastus.cloudapp.azure.com&lt;br/&gt;NSG: Ports 80 (ACME), 443 (HTTPS), 65200-65535" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#BAE6FD;strokeColor=#0284C7;" parent="1" vertex="1">
+          <mxGeometry x="380" y="170" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="appgw_waf" value="&lt;b&gt;WAF Policy (Prevention Mode)&lt;/b&gt;&lt;br/&gt;? OWASP 3.2 Core Rules&lt;br/&gt;? Custom Rule: &lt;b&gt;InferenceDisabled&lt;/b&gt; (blocks /v1*)&lt;br/&gt;? Custom Rule: AcmeHttp challenge allow" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF08A;strokeColor=#CA8A04;fontColor=#854D0E;" parent="1" vertex="1">
+          <mxGeometry x="380" y="245" width="320" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="appgw_core" value="&lt;b&gt;Application Gateway v2 (WAF_v2)&lt;/b&gt;&lt;br/&gt;? Autoscaling: 2-4 instances&lt;br/&gt;? HTTP (80): ACME challenge listener&lt;br/&gt;? HTTPS (443): SSL termination via Key Vault&lt;br/&gt;? Managed Identity: &lt;b&gt;edge-identity&lt;/b&gt;&lt;br/&gt;? Path-based Routing Maps" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=2;" parent="1" vertex="1">
+          <mxGeometry x="380" y="325" width="320" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="appgw_routes" value="&lt;b&gt;Path Routing Rules:&lt;/b&gt;&lt;br/&gt;? &lt;code&gt;/&lt;/code&gt; (Default) -&gt; Customer Portal&lt;br/&gt;? &lt;code&gt;/admin/*&lt;/code&gt; -&gt; Admin Portal&lt;br/&gt;? &lt;code&gt;/api/*&lt;/code&gt;, &lt;code&gt;/health&lt;/code&gt;, &lt;code&gt;/ready&lt;/code&gt; -&gt; Control Plane API&lt;br/&gt;? &lt;code&gt;/.well-known/acme-challenge/*&lt;/code&gt; -&gt; API (cert renewal)&lt;br/&gt;? &lt;code&gt;/v1*&lt;/code&gt; -&gt; Denied at WAF &amp; Edge Pool" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#F1F5F9;strokeColor=#94A3B8;fontSize=11;align=left;spacingLeft=6;" parent="1" vertex="1">
+          <mxGeometry x="380" y="430" width="320" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub_integration" value="&lt;b&gt;Subnet: aiflux-dev-app-service-integration (10.240.2.0/24)&lt;/b&gt;&lt;br/&gt;Delegation: Microsoft.Web/serverFarms | NSG: Outbound 1433, 443 to PE subnet only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#60A5FA;fontColor=#1D4ED8;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;" parent="1" vertex="1">
+          <mxGeometry x="360" y="560" width="360" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="vnet_outbound" value="&lt;b&gt;App Service Regional VNet Integration&lt;/b&gt;&lt;br/&gt;Enables Control Plane API to route private SQL &amp; KV queries into private endpoints" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#DBEAFE;strokeColor=#3B82F6;" parent="1" vertex="1">
+          <mxGeometry x="380" y="615" width="320" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub_pe" value="&lt;b&gt;Subnet: aiflux-dev-private-endpoints (10.240.3.0/24)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#34D399;fontColor=#065F46;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;" parent="1" vertex="1">
+          <mxGeometry x="740" y="130" width="360" height="800" as="geometry"/>
+        </mxCell>
+        <mxCell id="pe_sql" value="&lt;b&gt;Private Endpoint: SQL&lt;/b&gt;&lt;br/&gt;NIC: 10.240.3.x&lt;br/&gt;Private DNS: privatelink.database.windows.net" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#D1FAE5;strokeColor=#10B981;" parent="1" vertex="1">
+          <mxGeometry x="760" y="175" width="320" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="sql_db" value="&lt;b&gt;Azure SQL Database (S0)&lt;/b&gt;&lt;br/&gt;Location: Australia East (governed)&lt;br/&gt;? Public Network Access: &lt;b&gt;Disabled&lt;/b&gt;&lt;br/&gt;? Authentication: Entra Managed Identity (API identity)&lt;br/&gt;? SQL Server Boolean fix: &lt;code&gt;= 1&lt;/code&gt; (MSSQL compatible)&lt;br/&gt;? Tables: tenants, users, prices, subscriptions, audit" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#10B981;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="760" y="245" width="320" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="pe_kv" value="&lt;b&gt;Private Endpoint: Key Vault&lt;/b&gt;&lt;br/&gt;NIC: 10.240.3.x&lt;br/&gt;Private DNS: privatelink.vaultcore.azure.net" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#D1FAE5;strokeColor=#10B981;" parent="1" vertex="1">
+          <mxGeometry x="760" y="365" width="320" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="kv_core" value="&lt;b&gt;Azure Key Vault (aifluxdevkv)&lt;/b&gt;&lt;br/&gt;? Public Network Access: &lt;b&gt;Disabled&lt;/b&gt;&lt;br/&gt;? Access Policy: Azure RBAC&lt;br/&gt;? Stores: TLS/SSL certificates, secrets&lt;br/&gt;? &lt;b&gt;LATEST FIX:&lt;/b&gt; &lt;code&gt;bypass = AzureServices&lt;/code&gt;&lt;br/&gt;  &lt;i&gt;Allows App Gateway to fetch SSL cert via edge-identity!&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF3C7;strokeColor=#F59E0B;strokeWidth=2;fontColor=#92400E;" parent="1" vertex="1">
+          <mxGeometry x="760" y="435" width="320" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="pe_storage" value="&lt;b&gt;Private Endpoints: Storage Account&lt;/b&gt;&lt;br/&gt;Blobs, Queues, Tables (privatelink.*.core.windows.net)&lt;br/&gt;Function app storage &amp; deployment artifacts" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#D1FAE5;strokeColor=#10B981;" parent="1" vertex="1">
+          <mxGeometry x="760" y="555" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="fn_ingestion" value="&lt;b&gt;Azure Function: FinOps Ingestion&lt;/b&gt;&lt;br/&gt;SKU: Flex / Dedicated Consumption B1&lt;br/&gt;? Timer Trigger: Runs every 5 minutes&lt;br/&gt;? Pulls APIM request logs from Log Analytics&lt;br/&gt;? Calculates showback from SQL price rules&lt;br/&gt;? Writes aggregated cost records to SQL via PE" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#059669;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="760" y="635" width="320" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="mon_logs" value="&lt;b&gt;Observability Tier&lt;/b&gt;&lt;br/&gt;? Log Analytics Workspace (aiflux-dev-logs)&lt;br/&gt;? Application Insights (aiflux-dev-insights)&lt;br/&gt;? Captures APIM diagnostic logs &amp; App Service telemetry" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#581C87;" parent="1" vertex="1">
+          <mxGeometry x="760" y="755" width="320" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_apps" value="&lt;b&gt;Compute / App Services Tier (Linux Plan B1)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAF5FF;strokeColor=#A855F7;fontColor=#6B21A8;verticalAlign=top;align=left;spacingLeft=10;spacingTop=5;" parent="1" vertex="1">
+          <mxGeometry x="1150" y="90" width="290" height="430" as="geometry"/>
+        </mxCell>
+        <mxCell id="app_cust" value="&lt;b&gt;Customer Portal Web App&lt;/b&gt;&lt;br/&gt;&lt;code&gt;aiflux-dev-customer&lt;/code&gt;&lt;br/&gt;? React SPA, Entra ID Auth&lt;br/&gt;? Team keys, catalog, playground, showback&lt;br/&gt;? Direct dev access or via App Gateway" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#9333EA;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="130" width="250" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="app_admin" value="&lt;b&gt;IDS Admin Portal Web App&lt;/b&gt;&lt;br/&gt;&lt;code&gt;aiflux-dev-admin&lt;/code&gt;&lt;br/&gt;? React SPA, Entra ID Auth&lt;br/&gt;? Org onboarding, subscription limits, safety audit&lt;br/&gt;? Direct dev access or via App Gateway" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#9333EA;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="230" width="250" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="app_api" value="&lt;b&gt;Control Plane API Web App&lt;/b&gt;&lt;br/&gt;&lt;code&gt;aiflux-dev-api&lt;/code&gt; (FastAPI / Python)&lt;br/&gt;? ARM APIM team subscription management&lt;br/&gt;? Catalog &amp; Price administration&lt;br/&gt;? &lt;b&gt;LATEST FIX: CORS Origins include:&lt;/b&gt;&lt;br/&gt;  - Portal HTTPS origins&lt;br/&gt;  - &lt;b&gt;App Gateway FQDN&lt;/b&gt; (eastus.cloudapp.azure.com)&lt;br/&gt;? Outbound VNet Integration to SQL PE" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontColor=#78350F;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="330" width="250" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_apim" value="&lt;b&gt;AI Gateway Tier: Azure API Management (Basic v2)&lt;/b&gt;&lt;br/&gt;FQDN: &lt;code&gt;aiflux-fdpo-dev-apim.azure-api.net&lt;/code&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#D97706;fontColor=#92400E;verticalAlign=top;align=left;spacingLeft=10;spacingTop=5;" parent="1" vertex="1">
+          <mxGeometry x="1150" y="540" width="290" height="500" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_adapter" value="&lt;b&gt;Guarded Dev Adapter: &lt;code&gt;/dev/llm/v1&lt;/code&gt;&lt;/b&gt;&lt;br/&gt;Product: &lt;code&gt;aiflux-dev-unified&lt;/code&gt; (10 team subs)&lt;br/&gt;OpenAI-compatible /chat/completions &amp; /models" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF3C7;strokeColor=#B45309;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="595" width="250" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_cors" value="&lt;b&gt;1. CORS Preflight Policy (NEW)&lt;/b&gt;&lt;br/&gt;Allowed: App Gateway Origin + Portals&lt;br/&gt;Headers: Ocp-Apim-Subscription-Key, Content-Type" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=11;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="665" width="250" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_throttle" value="&lt;b&gt;2. Rate Limiting &amp; Throttling&lt;/b&gt;&lt;br/&gt;? 2 RPM per subscription / model&lt;br/&gt;? 20,000 TPM limit (burst headroom)&lt;br/&gt;? 100,000 max completion tokens" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=11;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="725" width="250" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_guard" value="&lt;b&gt;3. Safeguards &amp; Redaction&lt;/b&gt;&lt;br/&gt;? Synchronous PII Redaction (5-doc batches)&lt;br/&gt;? Prompt Shields &amp; Input Moderation&lt;br/&gt;? Output Content Safety Moderation" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=11;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="790" width="250" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_trans" value="&lt;b&gt;4. Multi-Provider Translation&lt;/b&gt;&lt;br/&gt;? OpenAI: Direct JSON pass-through&lt;br/&gt;? Anthropic: APIM XML policy translates&lt;br/&gt;  OpenAI -&gt; /anthropic/v1/messages&lt;br/&gt;  Strips internal &lt;code&gt;thinking&lt;/code&gt; blocks&lt;br/&gt;  Maps completion tokens &amp; usage" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=11;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="860" width="250" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="apim_ident" value="&lt;b&gt;5. Gateway Managed Identity&lt;/b&gt;&lt;br/&gt;Authenticates to Azure OpenAI &amp; Foundry backends without stored API keys" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=11;" parent="1" vertex="1">
+          <mxGeometry x="1170" y="955" width="250" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_models" value="&lt;b&gt;AI Services &amp; Model Backends&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontColor=#15803D;verticalAlign=top;align=left;spacingLeft=10;spacingTop=5;" parent="1" vertex="1">
+          <mxGeometry x="1470" y="540" width="290" height="500" as="geometry"/>
+        </mxCell>
+        <mxCell id="oai_models" value="&lt;b&gt;Azure OpenAI Service (East US)&lt;/b&gt;&lt;br/&gt;Pool: GlobalStandard (120k TPM quota)&lt;br/&gt;? &lt;code&gt;gpt-5.6-luna&lt;/code&gt;&lt;br/&gt;? &lt;code&gt;gpt-5.6-sol&lt;/code&gt;&lt;br/&gt;(OpenAI native chat/completions)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;" parent="1" vertex="1">
+          <mxGeometry x="1490" y="595" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="claude_model" value="&lt;b&gt;Azure AI Foundry / Anthropic&lt;/b&gt;&lt;br/&gt;? &lt;code&gt;claude-haiku-5-5&lt;/code&gt;&lt;br/&gt;Primary Foundry Account&lt;br/&gt;Anthropic Messages API endpoint" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;" parent="1" vertex="1">
+          <mxGeometry x="1490" y="690" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="safety_svc" value="&lt;b&gt;Azure AI Content Safety&lt;/b&gt;&lt;br/&gt;Resource: &lt;code&gt;aiflux-dev-safety&lt;/code&gt;&lt;br/&gt;? Prompt Shields (Jailbreak / injection)&lt;br/&gt;? Content filters (Hate, Violence, Sexual)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF08A;strokeColor=#CA8A04;" parent="1" vertex="1">
+          <mxGeometry x="1490" y="775" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="lang_svc" value="&lt;b&gt;Azure AI Language (Foundry)&lt;/b&gt;&lt;br/&gt;Resource: &lt;code&gt;aiflux-dev-foundry&lt;/code&gt;&lt;br/&gt;? Synchronous PII Entity Recognition&lt;br/&gt;? Redacts sensitive identifiers in input" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#FEF08A;strokeColor=#CA8A04;" parent="1" vertex="1">
+          <mxGeometry x="1490" y="860" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="preview_models" value="&lt;b&gt;Catalog Preview Tiles (6 Models)&lt;/b&gt;&lt;br/&gt;Labeled preview-only in catalog;&lt;br/&gt;routing disabled until provider validation" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fontFamily=Segoe UI;fontSize=12;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#64748B;" parent="1" vertex="1">
+          <mxGeometry x="1490" y="945" width="250" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="HTTPS (443)&lt;br/&gt;Web Traffic" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#0284C7;strokeWidth=2;fontColor=#0369A1;fontStyle=1;" parent="1" edge="1" source="usr_web" target="appgw_pip">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="OAuth2 / PKCE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="usr_web" target="id_entra">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="Direct Inference HTTPS&lt;br/&gt;(Ocp-Apim-Subscription-Key)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="usr_api" target="apim_adapter">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_kv_cert" value="&lt;b&gt;NEW FIX: Fetch SSL Cert&lt;/b&gt;&lt;br/&gt;(bypass = AzureServices via edge-identity)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#7C3AED;strokeWidth=1.5;fontColor=#6D28D9;dashed=1;" parent="1" edge="1" source="appgw_core" target="kv_core">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_route_cust" value="Route: /" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="appgw_core" target="app_cust">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_route_admin" value="Route: /admin/*" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="appgw_core" target="app_admin">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_route_api" value="Route: /api/*" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="appgw_core" target="app_api">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cors_api" value="API Calls (CORS allowed from Gateway FQDN)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#0284C7;strokeWidth=2;fontColor=#0369A1;fontStyle=1;" parent="1" edge="1" source="app_cust" target="app_api">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cors_apim" value="Playground Inference (CORS allowed)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#0284C7;strokeWidth=2;fontColor=#0369A1;fontStyle=1;" parent="1" edge="1" source="app_cust" target="apim_adapter">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_api_vnet" value="VNet Integration" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#059669;strokeWidth=1.5;fontColor=#065F46;dashed=1;" parent="1" edge="1" source="app_api" target="vnet_outbound">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_vnet_sql" value="Private Link (1433)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#059669;strokeWidth=1.5;fontColor=#065F46;dashed=1;" parent="1" edge="1" source="vnet_outbound" target="pe_sql">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_pe_sql" value="Private SQL S0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#059669;strokeWidth=1.5;fontColor=#065F46;dashed=1;" parent="1" edge="1" source="pe_sql" target="sql_db">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apim_oai" value="OpenAI Chat/Completions" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="apim_adapter" target="oai_models">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apim_claude" value="Haiku Translated Messages" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="apim_adapter" target="claude_model">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apim_safety" value="Prompt Shields &amp; Filters" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="apim_guard" target="safety_svc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apim_lang" value="PII Redaction (5-doc batch)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="apim_guard" target="lang_svc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apim_logs" value="Diagnostic Logs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="apim_adapter" target="mon_logs">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fn_read_logs" value="Read Log Analytics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#475569;strokeWidth=1.5;" parent="1" edge="1" source="fn_ingestion" target="mon_logs">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fn_write_sql" value="Write Cost &amp; Showback Records" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#059669;strokeWidth=1.5;fontColor=#065F46;dashed=1;" parent="1" edge="1" source="fn_ingestion" target="pe_sql">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="&lt;b&gt;Recent Changes &amp; Active Architecture Highlights:&lt;/b&gt;&lt;br/&gt;1. &lt;b&gt;Key Vault AzureServices Bypass:&lt;/b&gt; Key Vault network ACLs set to &lt;code&gt;bypass = AzureServices&lt;/code&gt;, enabling App Gateway v2 to load its SSL cert via managed identity.&lt;br/&gt;2. &lt;b&gt;Cross-Origin Gateway Support:&lt;/b&gt; Added &lt;code&gt;https://aiflux-gateway-dev.eastus.cloudapp.azure.com&lt;/code&gt; to CORS allowed origins for both Control Plane API and APIM adapter.&lt;br/&gt;3. &lt;b&gt;Guarded /dev/llm/v1 Adapter:&lt;/b&gt; Active OpenAI-compatible adapter supporting Luna, Sol, and Claude Haiku 5.5 (with internal thinking block stripping &amp; 20k TPM limit).&lt;br/&gt;4. &lt;b&gt;Hybrid Private Data:&lt;/b&gt; Azure SQL, Key Vault, and Storage run with public network access disabled via Private Endpoints in VNet &lt;code&gt;10.240.3.0/24&lt;/code&gt;." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;size=14;fontSize=11;align=left;spacingLeft=5;fillColor=#FEF3C7;strokeColor=#D97706;fontColor=#92400E;" parent="1" vertex="1">
+          <mxGeometry x="40" y="880" width="680" height="140" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

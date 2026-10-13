@@ -29,6 +29,181 @@ inspect input; output moderation uses sliding windows for SSE. A safety violatio
 may terminate a stream after earlier windows were delivered. No tool is executed
 by the gateway or playground, and no prompts/completions are retained.
 
+## Architecture
+
+The diagrams below illustrate the system topology and traffic flows reflecting all current development and infrastructure changes:
+- **Application Gateway v2 HTTPS & Key Vault integration:** Key Vault network ACLs permit `bypass = "AzureServices"` so Application Gateway v2 can retrieve and reload its SSL certificate via its User-Assigned Managed Identity (`edge-identity`).
+- **Unified CORS coverage:** Application Gateway FQDN (`https://aiflux-gateway-dev.eastus.cloudapp.azure.com`) is configured as an allowed CORS origin across both the Control Plane API and the APIM guarded adapter.
+- **Guarded `/dev/llm/v1` adapter:** Active APIM adapter supporting `gpt-5.6-luna`, `gpt-5.6-sol`, and `claude-haiku-5-5` (with internal thinking block normalization, 20,000 TPM limit, and 10 team subscriptions).
+- **Hybrid private data path:** Azure SQL (Australia East S0), Azure Key Vault, and Function Storage run with public access disabled via Private Endpoints in VNet `10.240.3.0/24`. Outbound access from App Service uses regional VNet integration (`10.240.2.0/24`).
+
+An editable Draw.io version is also maintained at [`docs/architecture.drawio`](docs/architecture.drawio).
+
+### System Topology & Routing
+
+```mermaid
+flowchart TB
+    subgraph Clients["Clients & Identity"]
+        direction TB
+        Browser["User Browser<br/>(Customer / IDS Admin Portals)"]
+        APIClients["API Clients / SDKs<br/>(OpenAI-Compatible Apps)"]
+        Entra["Microsoft Entra ID<br/>(Single-Tenant OAuth2 / PKCE)"]
+        Browser <-->|"Auth / Tokens"| Entra
+    end
+
+    subgraph Edge["Edge Layer (East US)"]
+        direction TB
+        AppGwPIP["Public IP & FQDN<br/><code>aiflux-gateway-dev.eastus.cloudapp.azure.com</code><br/>Ports 80 (ACME), 443 (HTTPS)"]
+        WAF["WAF Policy (Prevention Mode)<br/>• OWASP 3.2 Core Rules<br/>• Custom: Block <code>/v1*</code> Inference<br/>• Custom: ACME HTTP-01 Challenge"]
+        AppGw["Application Gateway v2 (WAF_v2)<br/>• Managed Identity: <code>edge-identity</code><br/>• HTTPS Listener (Key Vault SSL cert)"]
+        AppGwPIP --> WAF --> AppGw
+    end
+
+    subgraph VNet["Azure Virtual Network (10.240.0.0/16 - East US)"]
+        direction TB
+
+        subgraph SubnetAppGw["Subnet: appgw (10.240.1.0/24)"]
+            AppGwBox["App Gateway Subnet Routing"]
+        end
+
+        subgraph SubnetInteg["Subnet: app-service-integration (10.240.2.0/24)"]
+            VNetInteg["Regional VNet Integration<br/>(Delegated to Web ServerFarms)<br/>NSG: Outbound 1433/443 to PE Subnet"]
+        end
+
+        subgraph SubnetPE["Subnet: private-endpoints (10.240.3.0/24)"]
+            direction TB
+            PESQL["Private Endpoint: SQL<br/><code>privatelink.database.windows.net</code>"]
+            PEKV["Private Endpoint: Key Vault<br/><code>privatelink.vaultcore.azure.net</code>"]
+            PEStore["Private Endpoint: Storage<br/><code>privatelink.{blob,queue,table}</code>"]
+        end
+    end
+
+    subgraph Compute["App Services Tier (Linux B1 Plan)"]
+        direction TB
+        CustApp["Customer Portal Web App<br/><code>aiflux-dev-customer</code><br/>(React SPA: Playground, Keys, Showback)"]
+        AdminApp["IDS Admin Portal Web App<br/><code>aiflux-dev-admin</code><br/>(React SPA: Onboarding, Quotas, Audits)"]
+        APIApp["Control Plane API Web App<br/><code>aiflux-dev-api</code> (FastAPI / Python)<br/>• APIM ARM Subscription Management<br/>• MSSQL-safe Queries (<code>= 1</code>)<br/>• <b>CORS: AppGw FQDN + Portals</b>"]
+    end
+
+    subgraph PrivateData["Hybrid Private Data Tier (Public Access Disabled)"]
+        direction TB
+        AzureSQL[("Azure SQL Database S0<br/>Location: Australia East<br/>• Tenants, Users, Subscriptions<br/>• Pricing Rules & Audit Logs")]
+        KeyVault["Azure Key Vault<br/><code>aifluxdevkv</code> (RBAC)<br/>• TLS/SSL Origin Cert<br/>• <b>bypass = 'AzureServices'</b>"]
+        FnStorage["Function App Storage<br/>(State, Blobs, Queues, Tables)"]
+    end
+
+    subgraph Gateway["AI Gateway Tier (Azure APIM Basic v2)"]
+        direction TB
+        APIMAdapter["Guarded Dev Adapter: <code>/dev/llm/v1</code><br/>Product: <code>aiflux-dev-unified</code> (Cap: 10 Subs)"]
+        
+        subgraph Pipeline["Gateway Inbound Policy Pipeline"]
+            direction TB
+            P_CORS["1. CORS Policy: Allow AppGw FQDN + Portals"]
+            P_Auth["2. Auth: <code>Ocp-Apim-Subscription-Key</code>"]
+            P_Rate["3. Throttling: 2 RPM / 20k TPM / 100k Tokens"]
+            P_PII["4. Synchronous PII Redaction (5-doc Batches)"]
+            P_Shield["5. Prompt Shields & Input Moderation"]
+            P_Trans["6. Provider Normalization & Translation"]
+            P_OutMod["7. Output Safety Moderation & Thinking Filter"]
+            P_CORS --> P_Auth --> P_Rate --> P_PII --> P_Shield --> P_Trans --> P_OutMod
+        end
+        APIMAdapter --> Pipeline
+    end
+
+    subgraph AIBackends["AI Services & Model Backends"]
+        direction TB
+        OAI["Azure OpenAI Service (East US)<br/>GlobalStandard Pool (120k TPM quota)<br/>• <code>gpt-5.6-luna</code><br/>• <code>gpt-5.6-sol</code>"]
+        Foundry["Azure AI Foundry (East US)<br/>• <code>claude-haiku-5-5</code><br/>(Anthropic Messages API)"]
+        Safety["Azure AI Content Safety<br/><code>aiflux-dev-safety</code><br/>(Prompt Shields & Text Moderation)"]
+        Language["Azure AI Language Services<br/><code>aiflux-dev-foundry</code><br/>(Synchronous PII Detection)"]
+    end
+
+    subgraph FinOpsObs["Observability & FinOps"]
+        direction TB
+        LogAnalytics["Azure Log Analytics<br/><code>aiflux-dev-logs</code>"]
+        AppInsights["Application Insights<br/><code>aiflux-dev-insights</code>"]
+        FinOpsFn["FinOps Ingestion Timer Function<br/><code>aiflux-dev-ingestion</code> (5-min schedule)<br/>Reconciles logs with pricing rules"]
+    end
+
+    %% Edge Traffic Flows
+    Browser -->|"HTTPS (443) Web Traffic"| AppGwPIP
+    AppGw -->|"Path: / (Default)"| CustApp
+    AppGw -->|"Path: /admin/*"| AdminApp
+    AppGw -->|"Path: /api/*, /health, /ready"| APIApp
+    AppGw -.->|"SSL Cert Fetch (AzureServices Bypass)"| KeyVault
+
+    %% Direct Portal & Client API Flows
+    CustApp -->|"REST API (CORS)"| APIApp
+    AdminApp -->|"REST API (CORS)"| APIApp
+    CustApp -->|"Playground Chat (CORS)"| APIMAdapter
+    APIClients -->|"Direct Inference (/dev/llm/v1)"| APIMAdapter
+
+    %% Outbound Private Integration
+    APIApp -->|"Outbound VNet Integration"| VNetInteg
+    VNetInteg --> PESQL --> AzureSQL
+    VNetInteg --> PEKV --> KeyVault
+
+    %% Gateway to AI Services
+    P_PII -.->|"Redact PII"| Language
+    P_Shield -.->|"Input Shield Check"| Safety
+    P_OutMod -.->|"Output Safety Check"| Safety
+    P_Trans -->|"OpenAI Chat/Completions"| OAI
+    P_Trans -->|"Anthropic Messages (thinking stripped)"| Foundry
+
+    %% Observability & FinOps Flows
+    APIMAdapter -.->|"Diagnostic Logs"| LogAnalytics
+    APIApp -.->|"Telemetry"| AppInsights
+    FinOpsFn -->|"1. Query Request Logs"| LogAnalytics
+    FinOpsFn -->|"2. Outbound Integration"| VNetInteg
+    FinOpsFn -->|"3. Write Showback Costs"| PESQL
+```
+
+### Gateway Request & Guardrails Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as User / Playground / Client
+    participant GW as Azure APIM (/dev/llm/v1)
+    participant PII as Azure AI Language (PII)
+    participant Safety as Content Safety & Prompt Shields
+    participant Model as Azure OpenAI / Foundry (Haiku)
+    participant Logs as Log Analytics & FinOps
+
+    Client->>GW: POST /chat/completions (Ocp-Apim-Subscription-Key)
+    Note over GW: 1. Validate CORS origin (Portals + App Gateway FQDN)<br/>2. Validate Subscription Key (10-sub team pool)<br/>3. Check Throttling (2 RPM / 20k TPM)
+    
+    rect rgb(254, 249, 195)
+        Note over GW,PII: Guardrail Inspection Phase
+        GW->>PII: Synchronous PII detection in 5-document batches
+        PII-->>GW: Redacted prompt content
+        GW->>Safety: Prompt Shields & Input Moderation
+        Safety-->>GW: Input passed (no jailbreak/harmful content)
+    end
+
+    rect rgb(236, 253, 245)
+        Note over GW,Model: Execution & Translation Phase
+        alt Model is gpt-5.6-luna or gpt-5.6-sol
+            GW->>Model: Forward native OpenAI request (using Gateway UAMI)
+            Model-->>GW: OpenAI response + usage
+        else Model is claude-haiku-5-5
+            GW->>Model: APIM policy translates to /anthropic/v1/messages
+            Model-->>GW: Anthropic response (with thinking + text blocks)
+            Note over GW: Strip internal thinking blocks & map usage
+        end
+    end
+
+    rect rgb(254, 249, 195)
+        Note over GW,Safety: Output Moderation Phase
+        GW->>Safety: Moderation check on response text
+        Safety-->>GW: Output passed
+    end
+
+    GW-->>Client: 200 OK (OpenAI-compatible payload)
+    GW-)Logs: Stream diagnostic log (tokens, model, latency, sub ID)
+    Note over Logs: FinOps timer function ingests logs<br/>and computes showback costs in Azure SQL
+```
+
 ## Deployment context
 
 The user-selected FDPO subscription is `4d75ed7f-75ab-4db6-b1f3-263f240d1450`.
