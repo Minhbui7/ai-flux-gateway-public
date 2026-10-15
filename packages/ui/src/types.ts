@@ -88,18 +88,19 @@ export interface UsageSeries {
   interval_seconds: 60;
 }
 
-export interface UsageQuery {
+export interface UsageFilters {
   days: number;
   subscription_id?: string;
   organization_id?: string;
+  model?: string;
+}
+
+export interface UsageQuery extends UsageFilters {
   offset: number;
   limit: number;
 }
 
-export interface UsageSeriesQuery {
-  days: number;
-  subscription_id?: string;
-  organization_id?: string;
+export interface UsageSeriesQuery extends UsageFilters {
   start?: string;
   end?: string;
 }

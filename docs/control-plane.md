@@ -88,10 +88,27 @@ See `/openapi.json` for the generated control-plane contract. The main routes ar
 | Suspend / reactivate / reconcile | `PUT /api/subscriptions/{id}/state`, `POST .../reconcile` |
 | Scoped showback / export | `GET /api/usage`, `GET /api/usage/export` |
 | Scoped minute charts | `GET /api/usage/timeseries`, `GET /api/admin/usage/timeseries` |
+| Historical usage models | `GET /api/usage/models`, `GET /api/admin/usage/models` |
 | IDS onboarding | `/api/admin/organizations`, `/api/admin/members` |
 | IDS showback / safety / prices | `/api/admin/usage`, `/api/admin/safety`, `/api/admin/prices` |
 
-Minute chart queries accept `days` (1-366, default 30), `subscription_id`, and
+Showback, minute charts, and CSV accept an optional `model` string, matched against
+the recorded usage model (including historical models absent from the active
+catalog). Omitting it preserves all-model behavior. It applies before summary,
+p95, capability checks, transaction pagination, chart aggregation, and export
+limit evaluation; an unmatched model returns empty usage, not a zero cost.
+
+Historical model routes return `{ "items": ["model-name"], "total": 1 }` with
+sorted distinct names from all authorized usage in the selected `days` and
+`subscription_id` scope, plus `organization_id` for admins. Options are independent
+of selected model, transaction pagination, and chart viewport; they are not
+limited to the current page or callable catalog. Customer organization comes
+from the authenticated principal. Admin access and subscription ownership checks
+are the same as showback. A scope change that removes a selected model visibly
+resets the portal to All models only after successful option discovery; errors
+are surfaced without silently clearing the filter.
+
+Minute chart queries accept `days` (1-366, default 30), `subscription_id`, `model`, and
 optional paired timezone-qualified `start`/`end` timestamps for a viewport inside
 that period. IDS queries additionally accept `organization_id`. The same
 membership and subscription ownership checks as showback apply. The interval is
@@ -251,8 +268,14 @@ rewrite old projections: replay the relevant watermark window to reprice.
 
 Showback lists bounded records, known cost and completeness. Mixed currencies are
 never summed into one amount. CSV exports are capped at 10,000 records; narrow
-the time/subscription filter for larger data and use an IDS data-export process
+the time/subscription/model filter for larger data and use an IDS data-export process
 for bulk retrieval. CSV fields are protected against spreadsheet formula injection.
+CSV includes the full filtered period, not the visible transaction page or chart
+viewport, and is available even when the portal's default-collapsed transaction
+details are closed. Its columns and raw millisecond latency values are unchanged.
+Portal costs are estimates from configured list prices, not invoices; actual
+charges may differ due to Singtel-specific discounts. This disclosure does not
+change pricing calculations, apply discounts, or reprice historical usage.
 
 Safety records use an allowlisted metadata schema from an APIM trace with
 `source: "aiflux"` and metadata `category`/`action`. Arbitrary trace content and

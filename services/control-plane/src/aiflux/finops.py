@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, Float, case, cast, func, literal_column, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import Select
+from sqlalchemy.sql import ColumnElement, Select
 
 from aiflux.models import IngestionState, ModelPrice, UsageRecord
 from aiflux.schemas import PriceCreate
@@ -111,6 +111,36 @@ def usage_dict(row: UsageRecord) -> dict[str, Any]:
     return result
 
 
+def usage_conditions(
+    organization_id: str | None,
+    subscription_id: str | None,
+    model: str | None = None,
+) -> list[ColumnElement[bool]]:
+    conditions = []
+    if organization_id is not None:
+        conditions.append(UsageRecord.organization_id == organization_id)
+    if subscription_id is not None:
+        conditions.append(UsageRecord.subscription_id == subscription_id)
+    if model is not None:
+        conditions.append(UsageRecord.model == model)
+    return conditions
+
+
+def usage_models(
+    db: Session, organization_id: str | None, days: int, subscription_id: str | None,
+) -> dict[str, Any]:
+    items = list(db.scalars(
+        select(UsageRecord.model)
+        .where(
+            *usage_conditions(organization_id, subscription_id),
+            UsageRecord.occurred_at >= datetime.now(UTC) - timedelta(days=days),
+        )
+        .distinct()
+        .order_by(UsageRecord.model)
+    ))
+    return {"items": items, "total": len(items)}
+
+
 def usage_response(
     db: Session,
     organization_id: str | None,
@@ -118,12 +148,12 @@ def usage_response(
     subscription_id: str | None,
     offset: int,
     limit: int,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    conditions = [UsageRecord.occurred_at >= datetime.now(UTC) - timedelta(days=days)]
-    if organization_id is not None:
-        conditions.append(UsageRecord.organization_id == organization_id)
-    if subscription_id is not None:
-        conditions.append(UsageRecord.subscription_id == subscription_id)
+    conditions = [
+        *usage_conditions(organization_id, subscription_id, model),
+        UsageRecord.occurred_at >= datetime.now(UTC) - timedelta(days=days),
+    ]
     aggregates = db.execute(
         select(
             func.count(UsageRecord.id),
@@ -193,10 +223,11 @@ def usage_csv(
     organization_id: str | None,
     days: int,
     subscription_id: str | None,
+    model: str | None = None,
 ) -> str:
-    result = usage_response(db, organization_id, days, subscription_id, 0, 10001)
+    result = usage_response(db, organization_id, days, subscription_id, 0, 10001, model)
     if result["total"] > 10000:
-        raise ValueError("Export exceeds 10000 records; narrow the time or subscription filter")
+        raise ValueError("Export exceeds 10000 records; narrow the time, subscription or model filter")
     output = io.StringIO(newline="")
     fields = [
         "id",
@@ -233,6 +264,7 @@ def usage_series_query(
     subscription_id: str | None,
     start: datetime,
     end: datetime,
+    model: str | None = None,
 ) -> Select:
     timestamp = UsageRecord.occurred_at
     if dialect == "mssql":
@@ -244,11 +276,9 @@ def usage_series_query(
         minute = func.strftime("%Y-%m-%dT%H:%M:00Z", timestamp)
     else:
         raise ValueError(f"Minute usage aggregation does not support database dialect {dialect!r}")
-    conditions = [timestamp >= start, timestamp < end]
-    if organization_id is not None:
-        conditions.append(UsageRecord.organization_id == organization_id)
-    if subscription_id is not None:
-        conditions.append(UsageRecord.subscription_id == subscription_id)
+    conditions = [
+        *usage_conditions(organization_id, subscription_id, model), timestamp >= start, timestamp < end,
+    ]
     inputs = cast(UsageRecord.input_tokens, BigInteger)
     outputs = cast(UsageRecord.output_tokens, BigInteger)
     missing_tokens = UsageRecord.input_tokens.is_(None) | UsageRecord.output_tokens.is_(None)
@@ -275,8 +305,11 @@ def usage_series_response(
     subscription_id: str | None,
     start: datetime,
     end: datetime,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    query = usage_series_query(db.get_bind().dialect.name, organization_id, subscription_id, start, end)
+    query = usage_series_query(
+        db.get_bind().dialect.name, organization_id, subscription_id, start, end, model,
+    )
     items = []
     for row in db.execute(query).mappings():
         item = dict(row)

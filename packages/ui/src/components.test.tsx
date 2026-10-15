@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import { UsagePage, costLabel } from "./pages/UsagePage";
 import { PlaygroundPage, outcomeView } from "./pages/PlaygroundPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { UsageCharts } from "./components/UsageCharts";
+import * as ui from "./components/ui";
 import { validatePrice } from "./pages/admin";
 import type { UsagePage as UsageData } from "./types";
 
@@ -41,7 +42,7 @@ describe("UsagePage", () => {
     total: 1,
   });
   it("shows unknown cost, incomplete warning and unavailable TTFT/cache rather than zeros", async () => {
-    const api = withApi((url) => url.includes("timeseries")
+    const api = withApi((url) => url.includes("/usage/models") ? { items: ["m"], total: 1 } : url.includes("timeseries")
       ? { items: [], start: "2026-01-01T00:00:00Z", end: "2026-01-01T01:00:00Z", interval_seconds: 60 }
       : url.includes("subscriptions") ? { items: [], total: 0 } : data());
     wrap(api, <UsagePage />);
@@ -66,6 +67,7 @@ describe("UsagePage", () => {
         };
       }
       if (url.includes("subscriptions")) return { items: [], total: 0 };
+      if (url.includes("/usage/models")) return { items: ["m"], total: 1 };
       return data({ e2e_p95_ms: 1250, ttft_supported: true });
     });
     wrap(api, <UsagePage />);
@@ -78,6 +80,7 @@ describe("UsagePage", () => {
     expect(screen.getByRole("slider", { name: /tokens per minute/i })).toHaveAttribute("aria-valuetext", expect.stringContaining("UTC"));
     await userEvent.click(screen.getAllByText("View exact minute data")[2]!);
     expect(screen.getByText("1.250 s", { selector: "td" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Transaction details"));
     expect(screen.getByRole("columnheader", { name: "E2E (s)" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "TTFT (s)" })).toBeInTheDocument();
   }, 10_000);
@@ -89,7 +92,7 @@ describe("UsagePage", () => {
         const q = new URL(url, "https://portal").searchParams;
         return { items: [], start: q.get("start"), end: q.get("end"), interval_seconds: 60 };
       }
-      return url.includes("subscriptions") ? { items: [], total: 0 } : data();
+      return url.includes("/usage/models") ? { items: ["m"], total: 1 } : url.includes("subscriptions") ? { items: [], total: 0 } : data();
     });
     wrap(api, <UsagePage />);
     await screen.findByRole("heading", { name: "Requests per minute" });
@@ -104,6 +107,105 @@ describe("UsagePage", () => {
   it("marks partially priced cost as lower bound", () => {
     expect(costLabel(data({ known_cost: "1.20", currency: "USD", incomplete_requests: 3 }).summary).note).toMatch(/Lower bound/);
     expect(costLabel(data({ known_cost: "1.20", currency: "USD", incomplete_requests: 0 }).summary).value).toBe("USD 1.20");
+  });
+
+  it.each([false, true])("keeps filters, pagination, charts and collapsed CSV in sync (admin=%s)", async (admin) => {
+    const urls: URL[] = [];
+    const historical = "retired model/+&";
+    const download = vi.spyOn(ui, "downloadBlob").mockImplementation(() => undefined);
+    const api = withApi((path) => {
+      const url = new URL(path, "https://portal");
+      urls.push(url);
+      if (url.pathname.endsWith("/usage/models")) return { items: ["m", historical], total: 2 };
+      if (url.pathname.endsWith("/subscriptions") || url.pathname.endsWith("/organizations")) {
+        return { items: [{ id: "scope-1", name: "Selected scope" }], total: 1 };
+      }
+      if (url.pathname.endsWith("/timeseries")) {
+        return { items: [], start: url.searchParams.get("start"), end: url.searchParams.get("end"), interval_seconds: 60 };
+      }
+      if (url.pathname.endsWith("/export")) return new Response("id,model\n1,retired\n");
+      const result = data();
+      return { ...result, total: 120 };
+    });
+    try {
+      wrap(api, <UsagePage admin={admin} />);
+      await screen.findByText("Unknown", { selector: "dd" });
+      expect(screen.getByText(/configured list prices.*Singtel-specific discounts.*not an invoice/)).toBeInTheDocument();
+      const disclosure = screen.getByText("Transaction details").closest("details")!;
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(screen.getByText("E2E (s)", { selector: "th" })).not.toBeVisible();
+      await userEvent.selectOptions(screen.getByLabelText(admin ? "Organization" : "Subscription"), "scope-1");
+      await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+      await userEvent.selectOptions(screen.getByLabelText("Model"), historical);
+      await screen.findByText("Unknown", { selector: "dd" });
+      await userEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+      await waitFor(() => expect(download).toHaveBeenCalledOnce());
+      expect(disclosure).not.toHaveAttribute("open");
+      const exported = urls.filter((u) => u.pathname.endsWith("/export")).at(-1)!;
+      expect(exported.searchParams.get("model")).toBe(historical);
+      expect(exported.searchParams.get(admin ? "organization_id" : "subscription_id")).toBe("scope-1");
+      expect(exported.searchParams.has("offset")).toBe(false);
+      await userEvent.click(screen.getByText("Transaction details"));
+      expect(screen.getByRole("columnheader", { name: "E2E (s)" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Next" }));
+      await waitFor(() => expect(urls.some((u) => u.searchParams.get("offset") === "50")).toBe(true));
+      await waitFor(() => expect(screen.getByText("E2E (s)", { selector: "th" })).toBeVisible());
+      const discoveryCount = urls.filter((u) => u.pathname.endsWith("/usage/models")).length;
+      await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+      await waitFor(() => expect(urls.filter((u) => u.pathname.endsWith("/timeseries")).at(-1)!.searchParams.get("model")).toBe(historical));
+      expect(urls.filter((u) => u.pathname.endsWith("/usage/models"))).toHaveLength(discoveryCount);
+      await userEvent.selectOptions(screen.getByLabelText("Period"), "7");
+      await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+      expect(screen.getByLabelText("Model")).toHaveValue(historical);
+      await waitFor(() => expect(urls.filter((u) => u.pathname.endsWith("/usage")).at(-1)!.searchParams.get("offset")).toBe("0"));
+      await screen.findByText("Transaction details");
+      await userEvent.click(screen.getByText("Transaction details"));
+      expect(screen.getByText("E2E (s)", { selector: "th" })).not.toBeVisible();
+      for (const url of urls.filter((u) => u.searchParams.get("model") === historical)) {
+        expect(url.searchParams.get(admin ? "organization_id" : "subscription_id")).toBe("scope-1");
+      }
+    } finally {
+      download.mockRestore();
+    }
+  }, 20_000);
+
+  it("visibly resets unavailable models only after a successful current-scope lookup and ignores stale responses", async () => {
+    const urls: URL[] = [];
+    const api = withApi((path) => {
+      const url = new URL(path, "https://portal");
+      urls.push(url);
+      if (url.pathname.endsWith("/timeseries")) {
+        return { items: [], start: url.searchParams.get("start"), end: url.searchParams.get("end"), interval_seconds: 60 };
+      }
+      return url.pathname.endsWith("/subscriptions") ? { items: [], total: 0 } : data();
+    });
+    let finishOld!: (value: { items: string[]; total: number }) => void;
+    const old = new Promise<{ items: string[]; total: number }>((resolve) => { finishOld = resolve; });
+    const models = vi.spyOn(api, "usageModels")
+      .mockResolvedValueOnce({ items: ["m", "historical"], total: 2 })
+      .mockReturnValueOnce(old)
+      .mockRejectedValueOnce(new Error("lookup unavailable"))
+      .mockResolvedValue({ items: ["m"], total: 1 });
+    wrap(api, <UsagePage />);
+    await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "historical");
+    await userEvent.selectOptions(screen.getByLabelText("Period"), "7");
+    expect(screen.getByLabelText("Model")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    expect(screen.queryByRole("option", { name: "m" })).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Period"), "1");
+    await screen.findByText(/Could not load usage models/);
+    expect(screen.getByLabelText("Model")).toHaveValue("historical");
+    expect(screen.queryByText(/Reset to All models/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText(/Model "historical".*Reset to All models/);
+    expect(screen.getByLabelText("Model")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled();
+    await act(async () => { finishOld({ items: ["stale-scope-only"], total: 1 }); });
+    expect(screen.queryByRole("option", { name: "stale-scope-only" })).not.toBeInTheDocument();
+    expect(models).toHaveBeenCalledTimes(4);
+    await waitFor(() => expect(urls.filter((u) => u.pathname.endsWith("/usage")).at(-1)!.searchParams.get("model")).toBeNull());
+    expect(urls.filter((u) => u.pathname.endsWith("/timeseries")).at(-1)!.searchParams.get("model")).toBeNull();
   });
 });
 

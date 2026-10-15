@@ -25,7 +25,7 @@ describe("ControlApi", () => {
   });
   it("keeps the token out of export URLs", async () => {
     const { client, calls } = api(() => new Response("a,b\n1,2\n"));
-    await client.exportCsv(true, 30, "org-1");
+    await client.exportCsv(true, { days: 30, organization_id: "org-1" });
     expect(calls[0]!.url).toBe("/api/admin/usage/export?days=30&organization_id=org-1");
     expect(calls[0]!.url).not.toContain("tok");
   });
@@ -43,6 +43,36 @@ describe("ControlApi", () => {
     await client.adminUsageSeries(viewport);
     expect(calls[0]!.url).toBe("/api/usage/timeseries?days=7&subscription_id=sub+1&start=2026-01-01T00%3A00%3A00.000Z&end=2026-01-02T00%3A00%3A00.000Z");
     expect(calls[1]!.url).toBe("/api/admin/usage/timeseries?days=7&subscription_id=sub+1&organization_id=org%2F1&start=2026-01-01T00%3A00%3A00.000Z&end=2026-01-02T00%3A00%3A00.000Z");
+  });
+  it("applies model and subscription to all usage surfaces without leaking customer organization", async () => {
+    const { client, calls } = api(() => new Response(JSON.stringify({ items: [], total: 0 })));
+    const filters = { days: 7, subscription_id: "sub 1", organization_id: "org/1", model: "old model/+&" };
+    await client.usage({ ...filters, offset: 50, limit: 50 });
+    await client.adminUsage({ ...filters, offset: 0, limit: 50 });
+    await client.usageSeries(filters);
+    await client.adminUsageSeries(filters);
+    await client.exportCsv(false, filters);
+    await client.exportCsv(true, filters);
+    for (const [index, call] of calls.entries()) {
+      const url = new URL(call.url, "https://portal");
+      expect(url.searchParams.get("model")).toBe(filters.model);
+      expect(url.searchParams.get("subscription_id")).toBe(filters.subscription_id);
+      expect(url.searchParams.get("organization_id")).toBe(index % 2 ? filters.organization_id : null);
+      expect(url.searchParams.get("days")).toBe("7");
+      expect(call.init.cache).toBe("no-store");
+      expect(call.url).not.toContain("tok");
+    }
+    expect(calls[4]!.url).not.toMatch(/offset|limit|start|end/);
+  });
+  it("discovers historical model options independently of model, pagination and viewport", async () => {
+    const { client, calls } = api(() => new Response(JSON.stringify({ items: ["retired"], total: 1 })));
+    const q = { days: 1, subscription_id: "s", organization_id: "o", model: "ignored", offset: 50, start: "ignored" };
+    expect(await client.usageModels(q)).toEqual({ items: ["retired"], total: 1 });
+    await client.adminUsageModels(q);
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/usage/models?days=1&subscription_id=s",
+      "/api/admin/usage/models?days=1&subscription_id=s&organization_id=o",
+    ]);
   });
   it("closes a price period with a timezone-aware timestamp", async () => {
     const { client, calls } = api(() => new Response("{}"));
