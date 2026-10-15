@@ -117,6 +117,16 @@ That is why the explicit adapter was approved; do not represent it as native sup
 
 ## Implemented surface
 
+An optional admin settings fragment can now supply a request-scoped Content Safety
+threshold and native RPM/TPM/token quota enforcement for each guarded dev API.
+The API policies still own all three safety passes, PII/Prompt Shields, routing,
+output ceilings and fail-closed errors. This does not activate production.
+The feature is off by default and denied until explicitly configured when enabled;
+see [the canonical settings contract](control-plane.md#admin-managed-gateway-settings)
+and [operator rollout/rollback](infrastructure.md#opt-in-admin-gateway-settings).
+Initial activation isolates counter keys by API because the two guarded surfaces
+have different TPM ceilings. Subsequent revisions retain stable keys.
+
 Terraform creates the public Basic v2 development candidate, an **unpublished** subscription-required
 Product `aiflux`, and a **disabled ordinary HTTP placeholder**, not a native unified model API.
 The only operations are `GET /v1/models` and `POST /v1/chat/completions`.

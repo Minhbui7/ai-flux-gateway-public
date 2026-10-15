@@ -1,5 +1,43 @@
 # Hybrid development Terraform and local operator runbook
 
+## Opt-in admin gateway settings
+
+The code supports `dev_admin_settings_enabled=false` by default. No live deployment
+or activation is implied. See [the settings contract](control-plane.md#admin-managed-gateway-settings)
+for exact bounds, failure behavior, ownership and propagation limits.
+
+For a separately approved rollout: migrate SQL to `0002`, package the API bootstrap
+fragment and admin portal, retain all existing explicit inference/safety approvals,
+then review a Terraform plan enabling `dev_admin_settings_enabled`. This creates
+one denied inbound settings fragment per deployed guarded API, assigns the API
+identity read/write at those exact fragment resources, wires the API scope list
+and changes the invariant policy to include it. The runtime receives no write
+permission for API policies, backends or service configuration.
+
+Activation starts new API-scoped counter namespaces and blocks inference until an
+IDS administrator explicitly publishes safety, RPM/TPM, token quota and quota period.
+Schedule/block traffic accordingly; do not copy assumed budgets into deployment
+defaults. Apply only through the established authorized operator process, never
+from a portal request. After publication, verify the effective policy and bounded
+safe/safety-denied/rate-denied/quota-denied calls on each deployed API, metadata-only
+logging, and another Terraform plan showing published fragment values are preserved.
+Matching ARM readback is not proof of propagation or live enforcement.
+
+For recovery, retry uncertain writes from the portal; if external fragment edits
+cause a conflict, compare the exact reviewed desired/published SQL revision with
+the APIM fragment before operator restoration. Do not overwrite unknown drift.
+Then reconcile, or publish prior history values as a new audited revision. For
+urgent tightening, first disable affected inference with its established gate and
+verify traffic is blocked. Disabling the admin-settings flag returns to explicitly
+configured Terraform values and removes managed quota enforcement; it is a
+potential relaxation, not a safe automatic rollback. Do not downgrade SQL revision
+history or roll back to application code lacking the new schema during recovery.
+
+Customer packaging must carry migration `0002`, the bootstrap fragment, the
+scope/identity/ownership contract and operator activation/recovery instructions.
+Future Auto routing must decide whether quotas attach to the requested alias,
+resolved alias or both; selection/retry must not bypass subscription budgets.
+
 ## Model and portal expansion (2026-10-14)
 
 The guarded `/dev/llm/v1` development catalog now enables eleven models. All eight

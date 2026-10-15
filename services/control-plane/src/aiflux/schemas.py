@@ -76,6 +76,47 @@ class PriceEnd(Input):
         return value
 
 
+GatewayScope = Literal["dev-openai", "dev-unified"]
+QuotaPeriod = Literal["Hourly", "Daily", "Weekly", "Monthly", "Yearly"]
+
+
+class GatewayConfiguration(Input):
+    safety_threshold: int = Field(strict=True, ge=0, le=7)
+    rpm: int = Field(strict=True, ge=1, le=2)
+    tpm: int = Field(strict=True, ge=1, le=20000)
+    token_quota: int = Field(strict=True, ge=1, le=2147483647)
+    quota_period: QuotaPeriod
+
+
+class GatewaySettingsUpdate(Input):
+    expected_version: int = Field(strict=True, ge=0)
+    configuration: GatewayConfiguration
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class GatewaySettingsRetry(Input):
+    expected_version: int = Field(strict=True, ge=1)
+
+
+class GatewayRevisionOutput(BaseModel):
+    version: int
+    configuration: GatewayConfiguration
+    reason: str
+    object_id: str
+    occurred_at: datetime
+    state: Literal["pending", "published", "failed"]
+    error: str | None
+
+
+class GatewaySettingsOutput(BaseModel):
+    scope: GatewayScope
+    max_rpm: int = 2
+    max_tpm: int
+    version: int
+    published_version: int | None
+    desired: GatewayRevisionOutput | None
+
+
 T = TypeVar("T")
 
 

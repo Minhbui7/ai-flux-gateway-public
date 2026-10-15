@@ -1,0 +1,8 @@
+<fragment>
+  <return-response>
+    <set-status code="503" reason="Gateway settings require approval" />
+    <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+    <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+    <set-body>{"error":{"message":"Gateway settings require explicit administrator configuration.","type":"service_unavailable","code":"gateway_settings_unconfigured"}}</set-body>
+  </return-response>
+</fragment>

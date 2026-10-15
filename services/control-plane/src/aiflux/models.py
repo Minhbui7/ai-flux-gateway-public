@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -135,3 +137,29 @@ class IngestionState(Base):
     id: Mapped[str] = mapped_column(String(60), primary_key=True)
     watermark: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class GatewaySettings(Base):
+    __tablename__ = "gateway_settings"
+    scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    published_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class GatewaySettingsRevision(Base):
+    __tablename__ = "gateway_settings_revisions"
+    __table_args__ = (
+        UniqueConstraint("scope", "version"),
+        CheckConstraint("state IN ('pending', 'published', 'failed')"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    scope: Mapped[str] = mapped_column(ForeignKey("gateway_settings.scope"))
+    version: Mapped[int] = mapped_column(Integer)
+    configuration: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(500))
+    object_id: Mapped[str] = mapped_column(String(36))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    state: Mapped[Literal["pending", "published", "failed"]] = mapped_column(String(16), default="pending")
+    base_hash: Mapped[str] = mapped_column(String(64))
+    base_etag: Mapped[str] = mapped_column(String(200))
+    error: Mapped[str | None] = mapped_column(String(200), nullable=True)

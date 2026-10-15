@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     gateway_max_completion_tokens: int | None = Field(default=None, ge=1, le=100000)
     apim_resource_id: str = ""
     apim_product_id: str = "aiflux"
+    gateway_settings_scopes: list[Literal["dev-openai", "dev-unified"]] = []
     log_workspace_id: str = ""
     catalog_path: Path = Path("gateway/catalog/models.json")
     catalog_configured: bool = False

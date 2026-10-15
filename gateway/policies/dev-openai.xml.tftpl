@@ -109,8 +109,12 @@
           </when>
         </choose>
         <set-variable name="aiflux-model" value='@((string)JObject.Parse((string)context.Variables["aiflux-request-json"])["model"])' />
+%{ if admin_settings_enabled ~}
+        <include-fragment fragment-id="${settings_fragment_id}" />
+%{ else ~}
         <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@("rpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
         <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" retry-after-variable-name="aiflux-token-retry-after" />
+%{ endif ~}
         <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
           <categories output-type="EightSeverityLevels">
             <category name="Hate" threshold="${safety_threshold}" />
@@ -444,13 +448,22 @@
           <set-body>{"error":{"message":"The request must match the bounded development JSON schema.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
         </return-response>
       </when>
-      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt")'>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt" || (context.LastError.PolicyId == "aiflux-managed-token-limit" &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 429))'>
         <return-response>
           <set-status code="429" reason="Too Many Requests" />
           <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
           <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
           <set-header name="Retry-After" exists-action="override"><value>@(context.Variables.ContainsKey("aiflux-token-retry-after") &amp;&amp; context.Variables["aiflux-token-retry-after"] is int ? ((int)context.Variables["aiflux-token-retry-after"]).ToString() : context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
           <set-body>{"error":{"message":"The subscription model limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "aiflux-managed-token-limit" &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 403)'>
+        <return-response>
+          <set-status code="403" reason="Token quota exceeded" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>@(context.Variables.ContainsKey("aiflux-token-retry-after") &amp;&amp; context.Variables["aiflux-token-retry-after"] is int ? ((int)context.Variables["aiflux-token-retry-after"]).ToString() : context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
+          <set-body>{"error":{"message":"The subscription model token quota was exceeded.","type":"insufficient_quota","param":null,"code":"token_quota_exceeded"}}</set-body>
         </return-response>
       </when>
       <when condition='@(context.LastError.Reason == "ContentSafetyPolicyViolated")'>

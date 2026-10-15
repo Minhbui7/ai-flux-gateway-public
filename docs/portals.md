@@ -5,7 +5,7 @@ React/TypeScript (Vite, npm workspaces). Distinct entry points share `packages/u
 | Path | Purpose |
 |------|---------|
 | `apps/customer-portal` | Served at `/` — catalog, team subscriptions & key reveal, guarded text playground, usage/showback |
-| `apps/admin-portal` | Served at `/admin/` (Vite `base: /admin/`, router basename `/admin`) — showback, safety metadata, organizations, members, prices |
+| `apps/admin-portal` | Served at `/admin/` (Vite `base: /admin/`, router basename `/admin`) — showback, safety metadata, gateway settings, organizations, members, prices |
 | `packages/ui` | Shared client (`ControlApi`), `chatCompletion` (SSE), validation, pages, styles |
 | `tests/e2e` | Playwright (deny-by-default, mobile) |
 
@@ -34,6 +34,18 @@ If any required value is missing/invalid the portal renders a "Portal not config
 - Usage summary, request table, and CSV keep their existing millisecond fields/contracts. The portal displays p95, request E2E, and TTFT in seconds. Three synchronized UTC minute charts (requests, reported total tokens, and average E2E seconds) use the customer `/usage/timeseries` or admin `/admin/usage/timeseries` API, independent of request-table pagination. The API accepts `days` (1–366), customer `subscription_id`, admin `organization_id`, and optional ISO-UTC `start`/`end` viewport bounds. Its response includes minute timestamps, request/input/output/paired-total counts, average E2E seconds, missing-token request counts, latency sample counts, and `interval_seconds: 60`. Missing token observations remain null; paired known token totals with missing observations are shown as partial. Idle request/token minutes render as zero, while latency minutes without samples remain gaps, never zero. Charts share zoom, pan, and reset controls and refetch for the selected UTC viewport. Long ranges are visually downsampled while keyboard minute selection, exact tooltips, and paginated exact-minute data remain available.
 
 ## Development verification boundary
+
+The IDS **Gateway settings** page (`/admin/settings`) configures the guarded APIs
+only after an operator opts in. It shows desired and published revisions, explicit
+safety/RPM/TPM/token-quota inputs, reasons, publication failures and history.
+Values are blank until explicitly approved, not populated with guessed defaults.
+Publishing requires confirmation of any safety relaxation, quota-period change
+and propagation delay. Conflicts preserve edits until an explicit reload; failed
+publication supports retry, and history values can be published as a new revision.
+The customer portal exposes none of these controls. See
+[the canonical bounds, authorization and publication contract](control-plane.md#admin-managed-gateway-settings).
+The workflow has local API/UI/contract coverage; live admin/APIM propagation and
+enforcement acceptance must be performed in an authorized deployment.
 
 The 2026-10-12 deployment repair supersedes the earlier restrictions/gaps below:
 the explicitly approved direct App Service origins are public, their compiled

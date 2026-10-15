@@ -19,10 +19,31 @@ from aiflux.catalog import Catalog
 from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for, get_db
 from aiflux.finops import aware, create_price, usage_csv, usage_response, usage_series_response
-from aiflux.models import Base, Member, ModelPrice, Organization, SafetyEvent, TeamSubscription
+from aiflux.gateway_settings import (
+    bootstrap_fragment,
+    publish_settings,
+    require_scope,
+    revision_output,
+    save_settings,
+    settings_output,
+)
+from aiflux.models import (
+    Base,
+    GatewaySettingsRevision,
+    Member,
+    ModelPrice,
+    Organization,
+    SafetyEvent,
+    TeamSubscription,
+)
 from aiflux.schemas import (
     CatalogOutput,
     EnabledRequest,
+    GatewayRevisionOutput,
+    GatewayScope,
+    GatewaySettingsOutput,
+    GatewaySettingsRetry,
+    GatewaySettingsUpdate,
     IdentityOutput,
     KeyRequest,
     MemberCreate,
@@ -134,6 +155,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ready() -> dict:
         if settings.identity_errors():
             raise HTTPException(503, "Required identity/database configuration is incomplete")
+        if settings.gateway_settings_scopes:
+            bootstrap_fragment()
         with engine_for(settings.database_url).connect() as connection:
             connection.execute(text("SELECT 1"))
             for table in Base.metadata.sorted_tables:
@@ -143,6 +166,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/me", response_model=IdentityOutput)
     def me(principal: User) -> dict:
         return asdict(principal)
+
+    @app.get("/api/admin/gateway-settings", response_model=Page[GatewaySettingsOutput])
+    def gateway_settings(principal: Admin, db: Db) -> dict:
+        items = [settings_output(db, scope) for scope in dict.fromkeys(settings.gateway_settings_scopes)]
+        return {"items": items, "total": len(items)}
+
+    @app.put("/api/admin/gateway-settings/{scope}", response_model=GatewaySettingsOutput)
+    def gateway_settings_update(
+        scope: GatewayScope, payload: GatewaySettingsUpdate, principal: Admin, db: Db, apim: Apim,
+    ) -> GatewaySettingsOutput:
+        return save_settings(db, settings, apim, principal, scope, payload)
+
+    @app.post("/api/admin/gateway-settings/{scope}/reconcile", response_model=GatewaySettingsOutput)
+    def gateway_settings_reconcile(
+        scope: GatewayScope, payload: GatewaySettingsRetry, principal: Admin, db: Db, apim: Apim,
+    ) -> GatewaySettingsOutput:
+        return publish_settings(db, settings, apim, principal, scope, payload.expected_version)
+
+    @app.get("/api/admin/gateway-settings/{scope}/history", response_model=Page[GatewayRevisionOutput])
+    def gateway_settings_history(
+        scope: GatewayScope, principal: Admin, db: Db,
+        offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+    ) -> dict:
+        require_scope(settings, scope)
+        query = select(GatewaySettingsRevision).where(GatewaySettingsRevision.scope == scope)
+        total = db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = db.scalars(
+            query.order_by(GatewaySettingsRevision.version.desc()).offset(offset).limit(limit),
+        )
+        return {"items": [revision_output(row) for row in rows], "total": total}
 
     @app.get("/api/models", response_model=Page[CatalogOutput])
     def models(principal: User) -> dict:

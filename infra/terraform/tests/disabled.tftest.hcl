@@ -597,6 +597,44 @@ run "approved_adapter_token_limits" {
   }
 }
 
+run "admin_settings_are_opt_in" {
+  command = plan
+  assert {
+    condition     = !var.dev_admin_settings_enabled && length(azapi_resource.gateway_settings) == 0 && length(azurerm_role_assignment.gateway_settings) == 0
+    error_message = "Existing deployments must retain code-managed settings with no new runtime fragment permissions."
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_SETTINGS_SCOPES"] == "[]"
+    error_message = "The API must advertise no admin settings scopes until infrastructure opts in."
+  }
+}
+
+run "reject_admin_settings_without_guarded_inference" {
+  command = plan
+  variables {
+    dev_admin_settings_enabled = true
+  }
+  expect_failures = [var.dev_admin_settings_enabled]
+}
+
+run "admin_settings_keep_invariant_policy_owned_by_terraform" {
+  command = plan
+  variables {
+    dev_openai_inference_enabled        = true
+    dev_admin_settings_enabled          = true
+    dev_openai_content_safety_threshold = 3
+  }
+  expect_failures = [terraform_data.dev_openai_gate[0]]
+  assert {
+    condition     = length(azapi_resource.gateway_settings) == 1 && azapi_resource.gateway_settings["dev-openai"].body.properties.value == file("${path.module}/../../gateway/policies/settings-unconfigured.xml")
+    error_message = "Opt-in must bootstrap a single denied settings snapshot, not guess safety or quota values."
+  }
+  assert {
+    condition     = toset(azurerm_role_definition.gateway_settings[0].permissions[0].actions) == toset(["Microsoft.ApiManagement/service/policyFragments/read", "Microsoft.ApiManagement/service/policyFragments/write"])
+    error_message = "Runtime settings must not grant API policy, backend or service write permissions."
+  }
+}
+
 run "reject_adapter_tpm_above_approved_limit" {
   command = plan
   variables {

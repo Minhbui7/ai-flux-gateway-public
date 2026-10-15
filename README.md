@@ -14,7 +14,7 @@ Tools and structured outputs cannot be advertised without inspection coverage.
 | Public inference | APIM-only OpenAI-compatible `/v1/models` and `/v1/chat/completions` |
 | Edge | Staged public Application Gateway WAF_v2 HTTPS -> public Basic v2 APIM/authenticated origins (no development Front Door) |
 | Customer portal | React/TypeScript, Entra login, team keys, catalog, playground, showback |
-| IDS portal | React/TypeScript, onboarding, organization/subscription showback, safety events |
+| IDS portal | React/TypeScript, onboarding, organization/subscription showback, safety events, opt-in gateway settings |
 | Control plane | Python FastAPI, APIM ARM operations, approved tenant/user authorization |
 | Data | Azure SQL ownership, prices, usage projections, audit and safety metadata |
 | Observability | Azure Monitor/Log Analytics and Python timer ingestion |
@@ -28,6 +28,14 @@ Input PII is redacted with Azure Language. Content Safety and Prompt Shields
 inspect input; output moderation uses sliding windows for SSE. A safety violation
 may terminate a stream after earlier windows were delivered. No tool is executed
 by the gateway or playground, and no prompts/completions are retained.
+
+IDS administrators can configure guarded-API safety thresholds, RPM/TPM and
+explicit token quotas from `/admin/settings` after an operator opts in.
+Versioned SQL history, conditional APIM fragment publication and retry keep
+desired versus published state explicit; publication is not live enforcement
+proof. Existing deployments remain unchanged by default. See the
+[settings contract](docs/control-plane.md#admin-managed-gateway-settings) and
+[operator rollout](docs/infrastructure.md#opt-in-admin-gateway-settings).
 
 ## Architecture
 
