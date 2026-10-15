@@ -481,6 +481,32 @@ variable "dev_unified_max_completion_tokens" {
   }
 }
 
+variable "dev_unified_candidate_model_aliases" {
+  description = "Explicit, hidden candidate aliases temporarily routed only for guarded adapter smoke acceptance; never added to /models."
+  type        = set(string)
+  default     = []
+  validation {
+    condition = length(setsubtract(var.dev_unified_candidate_model_aliases, toset([
+      "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "Kimi-K2.6",
+      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5"
+    ]))) == 0
+    error_message = "Only the eight explicitly approved preview aliases may be temporary adapter candidates."
+  }
+}
+
+variable "dev_unified_accepted_model_aliases" {
+  description = "New aliases accepted by direct and guarded gateway evidence and therefore returned by /dev/llm/v1/models."
+  type        = set(string)
+  default     = []
+  validation {
+    condition = length(setsubtract(var.dev_unified_accepted_model_aliases, toset([
+      "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "Kimi-K2.6",
+      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5"
+    ]))) == 0
+    error_message = "Only the eight explicitly approved preview aliases may be enabled on the guarded adapter."
+  }
+}
+
 variable "catalog_container_path" {
   description = "Read-only catalog bundled in API/Function artifacts."
   type        = string

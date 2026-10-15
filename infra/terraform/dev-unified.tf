@@ -1,5 +1,9 @@
 locals {
-  dev_unified_aliases = concat(sort(tolist(local.dev_aliases)), ["claude-haiku-5-5"])
+  dev_unified_aliases = concat(
+    sort(tolist(local.dev_aliases)),
+    ["claude-haiku-5-5"],
+    sort(tolist(local.dev_accepted_aliases))
+  )
 }
 
 data "azapi_resource" "dev_haiku" {
@@ -33,6 +37,10 @@ resource "azurerm_api_management_api" "dev_unified" {
     precondition {
       condition     = var.dev_openai_inference_enabled && length(var.dev_portal_origins) == 2
       error_message = "The development adapter requires the verified OpenAI deployment gate and both exact portal origins."
+    }
+    precondition {
+      condition     = length(local.dev_candidate_aliases) == 0 || var.dev_unified_inference_enabled
+      error_message = "Temporary model candidates can only be routed through the guarded /dev/llm/v1 adapter, never /dev/v1."
     }
   }
 }
@@ -88,19 +96,35 @@ resource "azapi_resource" "dev_unified_policy" {
     properties = {
       format = "rawxml"
       value = templatefile("${path.module}/../../gateway/policies/dev-openai.xml.tftpl", {
-        language_endpoint       = trimsuffix(azapi_resource.ai["language"].output.properties.endpoint, "/")
-        gateway_identity_client = azurerm_user_assigned_identity.identity["gateway"].client_id
-        tpm_limit               = var.dev_unified_tpm_limit
-        rpm_limit               = var.dev_openai_rpm_limit
-        completion_token_limit  = var.dev_unified_max_completion_tokens
-        safety_threshold        = var.dev_openai_content_safety_threshold
-        safety_backend_id       = azapi_resource.dev_content_safety_backend[0].name
-        unified                 = true
-        product_id              = azurerm_api_management_product.dev_unified[0].product_id
-        cors_origins            = distinct(concat(var.dev_portal_origins, [for h in [var.gateway_origin_hostname] : "https://${h}" if h != ""]))
-        model_list              = jsonencode({ object = "list", data = [for alias in local.dev_unified_aliases : { id = alias, object = "model", owned_by = "aiflux" }] })
+        language_endpoint            = trimsuffix(azapi_resource.ai["language"].output.properties.endpoint, "/")
+        gateway_identity_client      = azurerm_user_assigned_identity.identity["gateway"].client_id
+        tpm_limit                    = var.dev_unified_tpm_limit
+        rpm_limit                    = var.dev_openai_rpm_limit
+        completion_token_limit       = var.dev_unified_max_completion_tokens
+        safety_threshold             = var.dev_openai_content_safety_threshold
+        safety_backend_id            = azapi_resource.dev_content_safety_backend[0].name
+        unified                      = true
+        product_id                   = azurerm_api_management_product.dev_unified[0].product_id
+        cors_origins                 = distinct(concat(var.dev_portal_origins, [for h in [var.gateway_origin_hostname] : "https://${h}" if h != ""]))
+        model_list                   = jsonencode({ object = "list", data = [for alias in local.dev_unified_aliases : { id = alias, object = "model", owned_by = "aiflux" }] })
+        model_alias_conditions       = local.dev_policy_model_alias_conditions
+        model_completion_limits      = jsonencode(local.dev_completion_limits)
+        anthropic_alias_conditions   = local.dev_policy_anthropic_conditions
+        model_limit_rules            = local.dev_policy_model_limit_rules
+        openai_aliases               = sort(tolist(local.dev_policy_openai_aliases))
+        openai_pool_ids              = local.dev_policy_openai_pool_ids
+        foundry_aliases              = sort(tolist(local.dev_policy_foundry_aliases))
+        foundry_api_versions         = local.dev_policy_foundry_api_versions
+        anthropic_aliases            = sort(tolist(local.dev_policy_anthropic_aliases))
+        anthropic_context_conditions = local.dev_policy_anthropic_context_conditions
+        anthropic_backend_ids        = local.dev_policy_anthropic_backend_ids
       })
     }
   }
-  depends_on = [azapi_resource.dev_anthropic_backend, azapi_resource.dev_model_pool, azapi_resource.dev_content_safety_backend]
+  depends_on = [
+    azapi_resource.dev_anthropic_backend,
+    azapi_resource.dev_anthropic_model_pool,
+    azapi_resource.dev_model_pool,
+    azapi_resource.dev_content_safety_backend
+  ]
 }

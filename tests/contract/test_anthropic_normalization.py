@@ -27,11 +27,17 @@ def response(**changes):
 
 VALID = {
     "text": (response(), "Library answer.", "stop"),
-    "multiple-text": (response(content=[TEXT, {"type": "text", "text": " More."}]),
-                      "Library answer. More.", "stop"),
+    "multiple-text": (
+        response(content=[TEXT, {"type": "text", "text": " More."}]),
+        "Library answer. More.",
+        "stop",
+    ),
     "thinking-text": (response(content=[THINKING, TEXT]), "Library answer.", "stop"),
-    "mixed-order": (response(content=[TEXT, THINKING, {"type": "text", "text": " More."}]),
-                    "Library answer. More.", "stop"),
+    "mixed-order": (
+        response(content=[TEXT, THINKING, {"type": "text", "text": " More."}]),
+        "Library answer. More.",
+        "stop",
+    ),
     "empty-thinking": (response(content=[THINKING | {"thinking": ""}, TEXT]), "Library answer.", "stop"),
     "stop-sequence": (response(stop_reason="stop_sequence"), "Library answer.", "stop"),
     "max-tokens": (response(stop_reason="max_tokens"), "Library answer.", "length"),
@@ -63,7 +69,8 @@ INVALID = {
     "tool": response(content=[{"type": "tool_use", "id": "synthetic", "name": "tool", "input": {}}, TEXT]),
     "unknown": response(content=[{"type": "future_block"}, TEXT]),
     "unconfirmed-redacted-thinking": response(
-        content=[{"type": "redacted_thinking", "data": "synthetic"}, TEXT]),
+        content=[{"type": "redacted_thinking", "data": "synthetic"}, TEXT]
+    ),
     "id-null": response(id=None),
     "id-empty": response(id=""),
     "id-whitespace": response(id=" "),
@@ -96,15 +103,22 @@ def execute_expression(tmp_path_factory, expression, fixtures):
     assert dotnet, "Install .NET 8 SDK (or set AIFLUX_DOTNET) to execute policy C# regressions."
     assert expression.startswith("@{") and expression.endswith("}")
     expression = expression[1:].replace("${completion_token_limit}", "100000")
+    expression = expression.replace(
+        "${anthropic_context_conditions}",
+        '(string)context.Variables["aiflux-model"] == "claude-haiku-5-5" || '
+        '(string)context.Variables["aiflux-model"] == "claude-sonnet-5-5" || '
+        '(string)context.Variables["aiflux-model"] == "claude-opus-5-5"',
+    )
     harness = tmp_path_factory.mktemp("anthropic-csharp")
     (harness / "Harness.csproj").write_text(
         '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
-        '<TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup>'
+        "<TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup>"
         '<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />'
-        '</ItemGroup></Project>', encoding="utf-8",
+        "</ItemGroup></Project>",
+        encoding="utf-8",
     )
     (harness / "Program.cs").write_text(
-        """
+        r"""
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -119,7 +133,8 @@ public class PolicyContext {
     public PolicyResponse Response;
     public Dictionary<string, object> Variables = new Dictionary<string, object> {
         { "aiflux-model", "claude-haiku-5-5" },
-        { "aiflux-backend-attempt", 1 }
+        { "aiflux-backend-attempt", 1 },
+        { "aiflux-request-json", "{\"max_completion_tokens\":100000}" }
     };
 }
 public class Normalizer {
@@ -131,7 +146,9 @@ public class Normalizer {
         return Normalize();
     }
     private string Normalize()
-""" + expression + """
+"""
+        + expression
+        + """
 }
 public class Program {
     public static void Main() {
@@ -146,18 +163,25 @@ public class Program {
         Console.WriteLine(results.ToString(Formatting.None));
     }
 }
-""", encoding="utf-8",
+""",
+        encoding="utf-8",
     )
     env = os.environ | {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"}
     build = subprocess.run(
         [dotnet, "build", str(harness / "Harness.csproj"), "--verbosity", "quiet"],
-        capture_output=True, text=True, env=env, timeout=180,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=180,
     )
     assert build.returncode == 0, build.stdout + build.stderr
     execution = subprocess.run(
         [dotnet, str(harness / "bin" / "Debug" / "net8.0" / "Harness.dll")],
         input=json.dumps(fixtures),
-        capture_output=True, text=True, env=env, timeout=60,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
     )
     assert execution.returncode == 0, execution.stderr
     return json.loads(execution.stdout)
@@ -168,7 +192,9 @@ def normalized(tmp_path_factory):
     policy = ET.parse(ROOT / "gateway" / "policies" / "dev-openai.xml.tftpl")
     expression = policy.find(".//set-body[@id='aiflux-anthropic-normalization']").text
     return execute_expression(
-        tmp_path_factory, expression, {name: value[0] for name, value in VALID.items()} | INVALID,
+        tmp_path_factory,
+        expression,
+        {name: value[0] for name, value in VALID.items()} | INVALID,
     )
 
 
@@ -177,36 +203,63 @@ def test_exact_usage_expression_keeps_only_valid_metadata(tmp_path_factory):
     expression = policy.find(".//set-variable[@name='aiflux-finops-usage']").attrib["value"]
     fixtures = {
         "openai": {
-            "_alias": "gpt-5.6-sol", "content": "SYNTHETIC_DO_NOT_LOG",
-            "usage": {"prompt_tokens": 100, "completion_tokens": 20,
-                      "prompt_tokens_details": {"cached_tokens": 40}},
+            "_alias": "gpt-5.6-sol",
+            "content": "SYNTHETIC_DO_NOT_LOG",
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 40},
+            },
         },
         "anthropic": {
-            "_attempts": 2, "content": [THINKING, TEXT],
-            "usage": {"input_tokens": 100, "output_tokens": 20,
-                      "cache_read_input_tokens": 40, "cache_creation_input_tokens": 10},
+            "_attempts": 2,
+            "content": [THINKING, TEXT],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 40,
+                "cache_creation_input_tokens": 10,
+            },
         },
         "invalid": {
-            "usage": {"input_tokens": True, "output_tokens": -1,
-                      "cache_read_input_tokens": 2**31, "cache_creation_input_tokens": "10"},
+            "usage": {
+                "input_tokens": True,
+                "output_tokens": -1,
+                "cache_read_input_tokens": 2**31,
+                "cache_creation_input_tokens": "10",
+            },
         },
         "missing": {},
     }
     results = execute_expression(tmp_path_factory, expression, fixtures)
     assert results["openai"] == {
-        "schema": "finops-v1", "model": "gpt-5.6-sol", "attempts": 1,
-        "input_tokens": 100, "output_tokens": 20,
-        "cached_input_tokens": 40, "cache_write_tokens": None,
+        "schema": "finops-v1",
+        "model": "gpt-5.6-sol",
+        "attempts": 1,
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cached_input_tokens": 40,
+        "cache_write_tokens": None,
     }
     assert results["anthropic"] == {
-        "schema": "finops-v1", "model": "claude-haiku-5-5", "attempts": 2,
-        "input_tokens": 100, "output_tokens": 20,
-        "cached_input_tokens": 40, "cache_write_tokens": 10,
+        "schema": "finops-v1",
+        "model": "claude-haiku-5-5",
+        "attempts": 2,
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cached_input_tokens": 40,
+        "cache_write_tokens": 10,
     }
     for name in ("missing", "invalid"):
-        assert all(results[name][key] is None for key in (
-            "input_tokens", "output_tokens", "cached_input_tokens", "cache_write_tokens",
-        ))
+        assert all(
+            results[name][key] is None
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+                "cache_write_tokens",
+            )
+        )
     assert "SYNTHETIC" not in json.dumps(results)
 
 
@@ -218,9 +271,13 @@ def test_supported_shapes_keep_only_answer_and_full_usage(normalized, name):
     assert actual["model"] == "claude-haiku-5-5"
     assert actual["id"] == provider["id"]
     assert isinstance(actual["created"], int)
-    assert actual["choices"] == [{
-        "index": 0, "message": {"role": "assistant", "content": answer}, "finish_reason": finish,
-    }]
+    assert actual["choices"] == [
+        {
+            "index": 0,
+            "message": {"role": "assistant", "content": answer},
+            "finish_reason": finish,
+        }
+    ]
     assert actual["usage"] == {
         "prompt_tokens": provider["usage"]["input_tokens"],
         "completion_tokens": provider["usage"]["output_tokens"],

@@ -36,6 +36,14 @@ describe("ControlApi", () => {
     expect(calls[0]!.url).toBe("/api/subscriptions/a%20b/reveal");
     expect(calls[1]!.url).toBe("/api/subscriptions?offset=50&limit=25");
   });
+  it("builds customer and admin minute-series requests with UTC viewport filters", async () => {
+    const { client, calls } = api(() => new Response(JSON.stringify({ items: [], start: "2026-01-01T00:00:00Z", end: "2026-01-02T00:00:00Z", interval_seconds: 60 })));
+    const viewport = { days: 7, subscription_id: "sub 1", organization_id: "org/1", start: "2026-01-01T00:00:00.000Z", end: "2026-01-02T00:00:00.000Z" };
+    await client.usageSeries(viewport);
+    await client.adminUsageSeries(viewport);
+    expect(calls[0]!.url).toBe("/api/usage/timeseries?days=7&subscription_id=sub+1&start=2026-01-01T00%3A00%3A00.000Z&end=2026-01-02T00%3A00%3A00.000Z");
+    expect(calls[1]!.url).toBe("/api/admin/usage/timeseries?days=7&subscription_id=sub+1&organization_id=org%2F1&start=2026-01-01T00%3A00%3A00.000Z&end=2026-01-02T00%3A00%3A00.000Z");
+  });
   it("closes a price period with a timezone-aware timestamp", async () => {
     const { client, calls } = api(() => new Response("{}"));
     await client.endPrice("p/1", "2025-02-01T00:00:00.000Z");

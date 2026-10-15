@@ -18,7 +18,7 @@ from aiflux.auth import Principal, TokenVerifier, get_admin, get_principal
 from aiflux.catalog import Catalog
 from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for, get_db
-from aiflux.finops import aware, create_price, usage_csv, usage_response
+from aiflux.finops import aware, create_price, usage_csv, usage_response, usage_series_response
 from aiflux.models import Base, Member, ModelPrice, Organization, SafetyEvent, TeamSubscription
 from aiflux.schemas import (
     CatalogOutput,
@@ -38,6 +38,7 @@ from aiflux.schemas import (
     SubscriptionCreate,
     SubscriptionOutput,
     UsagePage,
+    UsageSeries,
 )
 from aiflux.subscriptions import (
     audit,
@@ -242,6 +243,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reconcile(db, row, apim, principal)
         return subscription_dict(row)
 
+    def check_usage_subscription(
+        db: Session,
+        organization_id: str | None,
+        subscription_id: UUID | None,
+    ) -> None:
+        if subscription_id is not None and organization_id is not None:
+            row = db.get(TeamSubscription, str(subscription_id))
+            if row is None or row.organization_id != organization_id:
+                raise HTTPException(404, "Subscription not found")
+
     def usage(
         db: Session,
         organization_id: str | None,
@@ -250,10 +261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: int,
         limit: int,
     ) -> dict:
-        if subscription_id is not None and organization_id is not None:
-            row = db.get(TeamSubscription, str(subscription_id))
-            if row is None or row.organization_id != organization_id:
-                raise HTTPException(404, "Subscription not found")
+        check_usage_subscription(db, organization_id, subscription_id)
         return usage_response(
             db, organization_id, days, str(subscription_id) if subscription_id else None, offset, limit
         )
@@ -268,6 +276,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(50, ge=1, le=100),
     ) -> dict:
         return usage(db, principal.organization_id, days, subscription_id, offset, limit)
+
+    def usage_series(
+        db: Session,
+        organization_id: str | None,
+        days: int,
+        subscription_id: UUID | None,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> dict:
+        check_usage_subscription(db, organization_id, subscription_id)
+        now = datetime.now(UTC)
+        period_start = (now - timedelta(days=days)).replace(second=0, microsecond=0)
+        period_end = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        if (start is None) != (end is None):
+            raise HTTPException(422, "Specify both start and end for a chart viewport")
+        if start is not None and end is not None:
+            if start.tzinfo is None or end.tzinfo is None:
+                raise HTTPException(422, "Chart timestamps must include a timezone")
+            start, end = aware(start), aware(end)
+            if not period_start <= start < end <= period_end:
+                raise HTTPException(422, "Chart viewport must be inside the selected period")
+        else:
+            start, end = now - timedelta(days=days), now
+        return usage_series_response(
+            db, organization_id, str(subscription_id) if subscription_id else None, start, end,
+        )
+
+    @app.get("/api/usage/timeseries", response_model=UsageSeries)
+    def customer_usage_series(
+        principal: User,
+        db: Db,
+        days: int = Query(30, ge=1, le=366),
+        subscription_id: UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict:
+        return usage_series(db, principal.organization_id, days, subscription_id, start, end)
+
+    @app.get("/api/admin/usage/timeseries", response_model=UsageSeries)
+    def admin_usage_series(
+        principal: Admin,
+        db: Db,
+        days: int = Query(30, ge=1, le=366),
+        organization_id: UUID | None = None,
+        subscription_id: UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict:
+        return usage_series(
+            db, str(organization_id) if organization_id else None, days, subscription_id, start, end,
+        )
 
     def export(db: Session, org: str | None, days: int, subscription_id: UUID | None) -> Response:
         usage(db, org, days, subscription_id, 0, 1)

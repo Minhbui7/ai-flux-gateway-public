@@ -87,8 +87,29 @@ See `/openapi.json` for the generated control-plane contract. The main routes ar
 | Explicit key reveal / rotate | `POST /api/subscriptions/{id}/reveal`, `/rotate` |
 | Suspend / reactivate / reconcile | `PUT /api/subscriptions/{id}/state`, `POST .../reconcile` |
 | Scoped showback / export | `GET /api/usage`, `GET /api/usage/export` |
+| Scoped minute charts | `GET /api/usage/timeseries`, `GET /api/admin/usage/timeseries` |
 | IDS onboarding | `/api/admin/organizations`, `/api/admin/members` |
 | IDS showback / safety / prices | `/api/admin/usage`, `/api/admin/safety`, `/api/admin/prices` |
+
+Minute chart queries accept `days` (1-366, default 30), `subscription_id`, and
+optional paired timezone-qualified `start`/`end` timestamps for a viewport inside
+that period. IDS queries additionally accept `organization_id`. The same
+membership and subscription ownership checks as showback apply. The interval is
+60 seconds, timestamps are UTC, and ranges are half-open (`start <= time < end`).
+Queries aggregate all matching ingested requests in the database, independently
+of request-table pagination; failed and throttled requests count too.
+
+The response contains `items`, `start`, `end`, and `interval_seconds`. Each sparse
+minute item reports requests, reported input/output token sums, paired-known
+`total_tokens`, `missing_token_requests`, `latency_samples`, and
+`avg_e2e_seconds`. Missing minute rows mean no ingested requests, not missing
+latency measurements. All-missing token/latency values remain null; partially
+observed token sums are lower bounds, not complete totals. Average latency uses
+only measured requests and is converted from stored milliseconds to seconds.
+The existing summary/row API and CSV millisecond fields remain unchanged.
+SQL Server uses `DATEADD`/`DATEDIFF` minute grouping, floating-point latency
+averages, and BIGINT token sums; SQLite tests also compile the query with the
+MSSQL dialect to catch dialect-specific mistakes.
 
 Subscription creation requires a UUID `Idempotency-Key`. SQL ownership is
 committed before activating an APIM key. A failed ARM operation records `failed`

@@ -70,12 +70,38 @@ export interface UsagePage extends Paged<UsageItem> {
   summary: UsageSummary;
 }
 
+export interface UsageMinute {
+  minute: string;
+  requests: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  avg_e2e_seconds: number | null;
+  missing_token_requests: number;
+  latency_samples: number;
+}
+
+export interface UsageSeries {
+  items: UsageMinute[];
+  start: string;
+  end: string;
+  interval_seconds: 60;
+}
+
 export interface UsageQuery {
   days: number;
   subscription_id?: string;
   organization_id?: string;
   offset: number;
   limit: number;
+}
+
+export interface UsageSeriesQuery {
+  days: number;
+  subscription_id?: string;
+  organization_id?: string;
+  start?: string;
+  end?: string;
 }
 
 export interface Organization {

@@ -1,5 +1,49 @@
 # Hybrid development Terraform and local operator runbook
 
+## Model and portal expansion (2026-10-14)
+
+The guarded `/dev/llm/v1` development catalog now enables eleven models. All eight
+new aliases passed direct Foundry and guarded APIM completions before publication.
+The three GPT-6 models and two DeepSeek models have 100,000 backend TPM allocated
+in each existing account (East US and Sweden Central). Kimi-K2.6 has 100,000 TPM,
+claude-sonnet-5-5 has 50,000 TPM, and claude-opus-5-5 has the explicitly approved
+40,000 TPM in East US only. GlobalStandard quota is shared across regions:
+single-backend models must not be described as regionally redundant. These are
+pay-as-you-go quota allocations, not PTUs or a sustained-throughput guarantee.
+See `infra\models\model-spec.json` for exact pinned formats and versions.
+
+New models use a verified 4,096-token request output ceiling. Existing models'
+limits and the gateway's 20,000 TPM per-subscription/model throttle are unchanged.
+DeepSeek-V4-Flash-0731 advertises deprecation on 2026-12-03; do not silently
+substitute another version. No prices were invented for the new aliases:
+unpriced usage remains Unknown.
+
+API and ingestion images must bundle the same accepted catalog. Customer/admin
+images add configured endpoint details, secret-free REST/OpenAI Python examples,
+and synchronized requests/tokens/average-latency minute charts with zoom, pan and
+reset. Display latency in seconds without changing millisecond API/CSV contracts.
+Time-series routes retain Entra and organization/subscription authorization.
+Signed-in acceptance of these new portal features requires an approved browser
+session; anonymous probes and served-bundle checks do not establish that journey.
+Do not grant Azure CLI additional consent or introduce an authentication bypass
+to complete that check.
+
+The expansion preserves B1 compute, private SQL/vault/storage, MISE, exact CORS,
+existing model routes and production/native release gates. Review full saved
+plans and pin all four app images by immutable ACR digest. Apply serially and
+verify serving state, not just management-plane image settings.
+
+Final rollout checks confirmed the new customer/admin bundles, API `/health`
+and private-SQL `/ready` responses, both protected time-series routes, and eleven
+models in Function readiness. However, usage ingestion is currently paused:
+45 smoke-test requests from three deleted temporary APIM subscriptions have no
+SQL owner. The durable watermark remains `2026-10-13T17:35:00.608966+00:00`.
+Do not advance it, drop those rows, or assign them to a customer implicitly.
+Reconcile explicit test ownership before declaring fresh-usage acceptance.
+These APIM IDs are longer than the current 36-character SQL subscription ID:
+retain their exact telemetry identity through a reviewed mapping rather than
+truncating IDs or broadly matching a test-name prefix.
+
 ## Current development repair (2026-10-12)
 
 This status supersedes the historical partial-deployment notes below.

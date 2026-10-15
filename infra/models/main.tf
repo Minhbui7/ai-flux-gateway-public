@@ -35,24 +35,58 @@ variable "gateway_principal_id" {
 
 variable "openai_capacity" {
   type    = number
-  default = 1
+  default = 120
   validation {
-    condition     = var.openai_capacity >= 1 && floor(var.openai_capacity) == var.openai_capacity
-    error_message = "Capacity must be a positive integer; validate live regional quota before increasing."
+    condition     = var.openai_capacity == 120
+    error_message = "The existing GPT-5.6 deployment capacity is fixed at 120 units in each region."
   }
 }
 
 locals {
-  group_id  = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"
-  eastus_id = "${local.group_id}/providers/Microsoft.CognitiveServices/accounts/${var.eastus_account_name}"
+  model_spec = jsondecode(file("${path.module}/model-spec.json"))
+  group_id   = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"
+  eastus_id  = "${local.group_id}/providers/Microsoft.CognitiveServices/accounts/${var.eastus_account_name}"
   accounts = {
     eastus        = local.eastus_id
     swedencentral = azapi_resource.sweden.id
   }
-  deployments = {
-    for pair in setproduct(["eastus", "swedencentral"], ["gpt-5.6-luna", "gpt-5.6-sol"]) :
-    "${pair[0]}-${pair[1]}" => { region = pair[0], name = pair[1] }
+  deployment_models = {
+    for model in local.model_spec.models : model.id => model
+    if model.terraform_managed
   }
+  openai_deployments = {
+    for deployment in flatten([
+      for model in values(local.deployment_models) : [
+        for region in lookup(model, "regions", local.model_spec.regions) : {
+          key      = "${region}-${model.id}"
+          region   = region
+          name     = model.id
+          format   = model.arm_format
+          version  = model.version
+          capacity = model.capacity == 120 ? var.openai_capacity : model.capacity
+        }
+      ] if model.arm_format != "Anthropic"
+    ]) : deployment.key => deployment
+  }
+  anthropic_deployments = {
+    for deployment in flatten([
+      for model in values(local.deployment_models) : [
+        for region in lookup(model, "regions", local.model_spec.regions) : {
+          key      = "${region}-${model.id}"
+          region   = region
+          name     = model.id
+          format   = model.arm_format
+          version  = model.version
+          capacity = try(model.region_capacities[region], model.capacity)
+        }
+      ] if model.arm_format == "Anthropic"
+    ]) : deployment.key => deployment
+  }
+  shared_quota_preflight = alltrue([
+    for model in values(local.deployment_models) :
+    !contains(keys(model), "shared_quota_limit_units") ||
+    model.capacity * length(lookup(model, "regions", local.model_spec.regions)) <= model.shared_quota_limit_units
+  ])
 }
 
 data "azapi_resource" "eastus" {
@@ -84,14 +118,14 @@ resource "azapi_resource" "sweden" {
 }
 
 resource "azapi_resource" "openai" {
-  for_each  = local.deployments
+  for_each  = local.openai_deployments
   type      = "Microsoft.CognitiveServices/accounts/deployments@2025-06-01"
   name      = each.value.name
   parent_id = local.accounts[each.value.region]
   body = {
-    sku = { name = "GlobalStandard", capacity = var.openai_capacity }
+    sku = { name = "GlobalStandard", capacity = each.value.capacity }
     properties = {
-      model                = { format = "OpenAI", name = each.value.name, version = "2026-07-09" }
+      model                = { format = each.value.format, name = each.value.name, version = each.value.version }
       raiPolicyName        = "Microsoft.DefaultV2"
       versionUpgradeOption = "NoAutoUpgrade"
     }
@@ -102,6 +136,36 @@ resource "azapi_resource" "openai" {
     precondition {
       condition     = data.azapi_resource.eastus.output.properties.disableLocalAuth == true
       error_message = "Existing Foundry must retain disabled local/key authentication."
+    }
+    precondition {
+      condition     = local.shared_quota_preflight
+      error_message = "The combined East US and Sweden Central GlobalStandard capacity exceeds an explicit shared per-model quota budget."
+    }
+  }
+}
+
+resource "azapi_resource" "anthropic" {
+  for_each  = local.anthropic_deployments
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-06-01"
+  name      = each.value.name
+  parent_id = local.accounts[each.value.region]
+  body = {
+    sku = { name = "GlobalStandard", capacity = each.value.capacity }
+    properties = {
+      model                = { format = each.value.format, name = each.value.name, version = each.value.version }
+      versionUpgradeOption = "NoAutoUpgrade"
+    }
+  }
+  response_export_values = ["id", "sku", "properties.model", "properties.provisioningState"]
+  lifecycle {
+    prevent_destroy = true
+    precondition {
+      condition     = data.azapi_resource.eastus.output.properties.disableLocalAuth == true
+      error_message = "Existing Foundry must retain disabled local/key authentication."
+    }
+    precondition {
+      condition     = local.shared_quota_preflight
+      error_message = "The combined East US and Sweden Central GlobalStandard capacity exceeds an explicit shared per-model quota budget."
     }
   }
 }
@@ -136,5 +200,8 @@ resource "azapi_resource" "gateway_anthropic_user_sweden" {
 }
 
 output "deployments" {
-  value = { for key, deployment in azapi_resource.openai : key => deployment.output }
+  value = merge(
+    { for key, deployment in azapi_resource.openai : key => deployment.output },
+    { for key, deployment in azapi_resource.anthropic : key => deployment.output }
+  )
 }

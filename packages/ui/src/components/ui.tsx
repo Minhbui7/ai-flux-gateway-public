@@ -127,6 +127,8 @@ export function Table({ caption, head, children }: { caption: string; head: stri
 export const NA = "—";
 export const fmtInt = (n: number | null | undefined) => (n === null || n === undefined ? NA : n.toLocaleString("en-US"));
 export const fmtMs = (n: number | null | undefined) => (n === null || n === undefined ? NA : `${Math.round(n).toLocaleString("en-US")} ms`);
+export const fmtSecondsFromMs = (n: number | null | undefined) =>
+  n === null || n === undefined ? NA : `${(n / 1000).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })} s`;
 export const fmtDate = (s: string | null | undefined) => {
   if (!s) return NA;
   const d = new Date(s);

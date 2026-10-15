@@ -3,4 +3,4 @@ resource_group_name  = "rg-aiflux-dev"
 eastus_account_name  = "aiflux-dev-foundry"
 sweden_account_name  = "aiflux-dev-foundry-swc"
 gateway_principal_id = "00000000-0000-0000-0000-000000000000"
-openai_capacity      = 1
+openai_capacity      = 120

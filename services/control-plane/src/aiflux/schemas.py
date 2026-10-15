@@ -166,6 +166,24 @@ class UsagePage(Page[UsageOutput]):
     summary: UsageSummary
 
 
+class UsageMinute(BaseModel):
+    minute: datetime
+    requests: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    avg_e2e_seconds: float | None
+    missing_token_requests: int
+    latency_samples: int
+
+
+class UsageSeries(BaseModel):
+    items: list[UsageMinute]
+    start: datetime
+    end: datetime
+    interval_seconds: int = 60
+
+
 class SafetyOutput(BaseModel):
     id: str
     organization_id: str
