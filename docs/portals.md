@@ -2,6 +2,14 @@
 
 React/TypeScript (Vite, npm workspaces). Distinct entry points share `packages/ui` (typed control-plane client, SSE/chat client, components).
 
+See the [PRD](prd.md), [technical specification](technical-specification.md) and
+[security/approval guide](security-and-approvals.md) for requirements and review
+boundaries. [Capabilities](capabilities.md) is the canonical status reference.
+The current source development catalog contains eleven enabled aliases; dated
+three-model records below precede that expansion. #10 / PR #14's model filters,
+collapsed transaction details and pricing disclosures are pending changes,
+not merged behavior described by this baseline.
+
 | Path | Purpose |
 |------|---------|
 | `apps/customer-portal` | Served at `/` — catalog, team subscriptions & key reveal, guarded text playground, usage/showback |
@@ -36,7 +44,13 @@ If any required value is missing/invalid the portal renders a "Portal not config
 - Playground calls the configured gateway directly with `Ocp-Apim-Subscription-Key`; there is no model proxy. The development catalog permits guarded, non-streaming text chat only, while existing capability-gated streaming, tool, and structured-output controls remain available for catalogs that advertise those capabilities. Requests include the selected model's advertised `max_completion_tokens` bound. Its Code dialog shows the configured gateway base URI, exact `/chat/completions` endpoint, a cURL REST request, and an OpenAI Python SDK example. Both snippets use the selected model/settings, an environment-variable key placeholder, and no live key or token. The Python example sets `max_retries=0`; clipboard success/failure is shown in the dialog.
 - Usage summary, request table, and CSV keep their existing millisecond fields/contracts. The portal displays p95, request E2E, and TTFT in seconds. Three synchronized UTC minute charts (requests, reported total tokens, and average E2E seconds) use the customer `/usage/timeseries` or admin `/admin/usage/timeseries` API, independent of request-table pagination. The API accepts `days` (1–366), customer `subscription_id`, admin `organization_id`, and optional ISO-UTC `start`/`end` viewport bounds. Its response includes minute timestamps, request/input/output/paired-total counts, average E2E seconds, missing-token request counts, latency sample counts, and `interval_seconds: 60`. Missing token observations remain null; paired known token totals with missing observations are shown as partial. Idle request/token minutes render as zero, while latency minutes without samples remain gaps, never zero. Charts share zoom, pan, and reset controls and refetch for the selected UTC viewport. Long ranges are visually downsampled while keyboard minute selection, exact tooltips, and paginated exact-minute data remain available.
 
-## Development verification boundary
+## Historical development verification records
+
+The following dated records preserve bounded acceptance and superseded repair
+steps; present-tense wording inside them describes that snapshot, not fresh
+Azure state. In particular, later records supersede three-model/preview,
+ingestion-disabled and direct-origin-restriction statements. Latest recorded
+ingestion is paused on unowned test telemetry; current live freshness is unverified.
 
 The 2026-10-12 deployment repair supersedes the earlier restrictions/gaps below:
 the explicitly approved direct App Service origins are public, their compiled
@@ -91,8 +105,10 @@ releasing an answer. Input/history character bounds remain unchanged; reset the
 conversation if a long previous answer exceeds them.
 
 Usage is not read directly from APIM. The page queries SQL usage projections
-written by the ingestion Function, which is currently disabled and has
-`AIFLUX_CATALOG_CONFIGURED=false`. Live Log Analytics checks confirm gateway and
+written by the ingestion Function. At this earlier repair snapshot it was
+disabled with `AIFLUX_CATALOG_CONFIGURED=false`; later historical activation and
+a subsequent pause are recorded in the infrastructure runbook.
+Log Analytics checks at that snapshot confirmed gateway and
 model token records are arriving, but this does not populate SQL automatically.
 Estimates additionally require effective model/provider/region price versions;
 unpriced or missing usage must remain Unknown, never zero. FinOps activation
@@ -112,16 +128,16 @@ App Service and future gateway SPA callbacks. The API exposes the enabled
 `access_as_user` scope, requests v2 tokens, and preauthorizes both portal clients.
 These checks confirm registration configuration, not a completed signed-in journey.
 
-Direct App Service access remains restricted to the reviewed operator `/32` and
-Application Gateway subnet, with default Deny. The verification shell currently
-uses rotating egress IPs: adding one explicitly approved `/32` did not make repeated
+Before the approved direct-dev stopgap, App Service access was restricted to the
+reviewed operator `/32` and Application Gateway subnet, with default Deny. The
+verification shell used rotating egress IPs: adding one explicitly approved `/32` did not make repeated
 requests reachable. That ineffective additional rule was removed; the original
 restrictions remain intact. Continued direct HTTPS checks need an approved stable
 egress path, not an Internet-wide allow rule.
 
 Callback registration alone does not wire the direct portal to the control plane.
-The deployed portal runtime CSP origins still name the future gateway, and the
-control-plane CORS allowlist is empty. A direct cross-origin API configuration
+Before the direct-dev repair, runtime CSP named the future gateway and the
+control-plane CORS allowlist was empty. A direct cross-origin API configuration
 therefore needs matching compiled API URLs, explicit CSP origins and exact CORS
 origins before it can be accepted. The current main catalog release flag remains
 closed. Do not claim catalog, playground or team-key acceptance from callback
