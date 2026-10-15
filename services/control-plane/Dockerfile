@@ -10,6 +10,7 @@ COPY pyproject.toml ./
 COPY services/control-plane ./services/control-plane
 RUN pip install --no-cache-dir . && useradd --uid 10001 --create-home aiflux
 COPY gateway/catalog ./gateway/catalog
+COPY gateway/policies/settings-unconfigured.xml ./gateway/policies/settings-unconfigured.xml
 USER aiflux
 EXPOSE 8000
 CMD ["uvicorn", "aiflux.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

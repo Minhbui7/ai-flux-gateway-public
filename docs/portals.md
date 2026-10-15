@@ -13,7 +13,7 @@ not merged behavior described by this baseline.
 | Path | Purpose |
 |------|---------|
 | `apps/customer-portal` | Served at `/` — catalog, team subscriptions & key reveal, guarded text playground, usage/showback |
-| `apps/admin-portal` | Served at `/admin/` (Vite `base: /admin/`, router basename `/admin`) — showback, safety metadata, organizations, members, prices |
+| `apps/admin-portal` | Served at `/admin/` (Vite `base: /admin/`, router basename `/admin`) — showback, safety metadata, gateway settings, organizations, members, prices |
 | `packages/ui` | Shared client (`ControlApi`), `chatCompletion` (SSE), validation, pages, styles |
 | `tests/e2e` | Playwright (deny-by-default, mobile) |
 
@@ -51,6 +51,18 @@ steps; present-tense wording inside them describes that snapshot, not fresh
 Azure state. In particular, later records supersede three-model/preview,
 ingestion-disabled and direct-origin-restriction statements. Latest recorded
 ingestion is paused on unowned test telemetry; current live freshness is unverified.
+
+The IDS **Gateway settings** page (`/admin/settings`) configures the guarded APIs
+only after an operator opts in. It shows desired and published revisions, explicit
+safety/RPM/TPM/token-quota inputs, reasons, publication failures and history.
+Values are blank until explicitly approved, not populated with guessed defaults.
+Publishing requires confirmation of any safety relaxation, quota-period change
+and propagation delay. Conflicts preserve edits until an explicit reload; failed
+publication supports retry, and history values can be published as a new revision.
+The customer portal exposes none of these controls. See
+[the canonical bounds, authorization and publication contract](control-plane.md#admin-managed-gateway-settings).
+The workflow has local API/UI/contract coverage; live admin/APIM propagation and
+enforcement acceptance must be performed in an authorized deployment.
 
 The 2026-10-12 deployment repair supersedes the earlier restrictions/gaps below:
 the explicitly approved direct App Service origins are public, their compiled

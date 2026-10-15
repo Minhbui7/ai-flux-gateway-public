@@ -24,6 +24,14 @@ The [capability matrix](docs/capabilities.md) is the canonical status reference.
 | Deployment operators | [Infrastructure](docs/infrastructure.md), [model deployment](infra/models/README.md) |
 | Deferred alternative operator design | [Private operator](docs/operator-runner.md) |
 
+IDS administrators can configure guarded-API safety thresholds, RPM/TPM and
+explicit token quotas from `/admin/settings` after an operator opts in.
+Versioned SQL history, conditional APIM fragment publication and retry keep
+desired versus published state explicit; publication is not live enforcement
+proof. Existing deployments remain unchanged by default. See the
+[settings contract](docs/control-plane.md#admin-managed-gateway-settings) and
+[operator rollout](docs/infrastructure.md#opt-in-admin-gateway-settings).
+
 ## Architecture
 
 Solid arrows show implemented integration contracts, not verified running

@@ -101,7 +101,9 @@ resource "azapi_resource" "dev_unified_policy" {
         tpm_limit                    = var.dev_unified_tpm_limit
         rpm_limit                    = var.dev_openai_rpm_limit
         completion_token_limit       = var.dev_unified_max_completion_tokens
-        safety_threshold             = var.dev_openai_content_safety_threshold
+        safety_threshold             = var.dev_admin_settings_enabled ? "@((int)context.Variables[&quot;aiflux-safety-threshold&quot;])" : tostring(var.dev_openai_content_safety_threshold)
+        admin_settings_enabled       = var.dev_admin_settings_enabled
+        settings_fragment_id         = var.dev_admin_settings_enabled ? azapi_resource.gateway_settings["dev-unified"].name : ""
         safety_backend_id            = azapi_resource.dev_content_safety_backend[0].name
         unified                      = true
         product_id                   = azurerm_api_management_product.dev_unified[0].product_id

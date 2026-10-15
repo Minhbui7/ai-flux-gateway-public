@@ -37,6 +37,14 @@ class ApimClient:
 
     def _request(self, method: str, sid: str, action: str = "", body: dict | None = None) -> dict:
         url = self._url(sid, action)
+        response = self._send(method, url, body, "*")
+        if response.status_code == 204:
+            return {}
+        return self._json(response)
+
+    def _send(
+        self, method: str, url: str, body: dict | None = None, etag: str | None = None,
+    ) -> httpx.Response:
         if self._credential is None:
             self._credential = DefaultAzureCredential()
         try:
@@ -49,14 +57,16 @@ class ApimClient:
                 url,
                 json=body,
                 timeout=30,
-                headers={"Authorization": f"Bearer {token}", "If-Match": "*"},
+                headers={"Authorization": f"Bearer {token}"} | ({"If-Match": etag} if etag else {}),
             )
         except httpx.HTTPError as exc:
             raise ApimError() from exc
         if response.status_code not in (200, 201, 204):
             raise ApimError(response.status_code)
-        if response.status_code == 204:
-            return {}
+        return response
+
+    @staticmethod
+    def _json(response: httpx.Response) -> dict:
         try:
             result = response.json()
         except ValueError as exc:
@@ -64,6 +74,38 @@ class ApimClient:
         if not isinstance(result, dict):
             raise ApimError(response.status_code)
         return result
+
+    def _fragment_url(self, scope: str) -> str:
+        if scope not in self.settings.gateway_settings_scopes:
+            raise ApimError()
+        # Reuse resource-ID validation, never accept an ARM URL from an API caller.
+        self._url("00000000-0000-0000-0000-000000000000")
+        return (
+            f"https://management.azure.com{self.settings.apim_resource_id.rstrip('/')}"
+            f"/policyFragments/aiflux-{scope}-settings?api-version={API_VERSION}"
+        )
+
+    def get_settings_fragment(self, scope: str) -> tuple[str, str]:
+        response = self._send("GET", self._fragment_url(scope) + "&format=rawxml")
+        properties = self._json(response).get("properties")
+        value = properties.get("value") if isinstance(properties, dict) else None
+        etag = response.headers.get("ETag")
+        if not isinstance(value, str) or not value or len(value) > 65536 or not etag or len(etag) > 200:
+            raise ApimError(response.status_code)
+        return value, etag
+
+    def put_settings_fragment(self, scope: str, value: str, etag: str) -> None:
+        if not etag or etag == "*":
+            raise ApimError()
+        self._send(
+            "PUT", self._fragment_url(scope),
+            {"properties": {
+                "description": (
+                    "Runtime-owned bounded settings; invariant inspection and routing remain Terraform-owned."
+                ),
+                "format": "rawxml", "value": value,
+            }}, etag,
+        )
 
     def ensure(self, sid: str, display_name: str, state: str) -> None:
         self._request(

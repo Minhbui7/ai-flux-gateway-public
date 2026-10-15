@@ -146,3 +146,29 @@ export interface Price {
 }
 
 export type PriceInput = Omit<Price, "id">;
+export type GatewayScope = "dev-openai" | "dev-unified";
+export type QuotaPeriod = "Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly";
+export interface GatewayConfiguration {
+  safety_threshold: number;
+  rpm: number;
+  tpm: number;
+  token_quota: number;
+  quota_period: QuotaPeriod;
+}
+export interface GatewayRevision {
+  version: number;
+  configuration: GatewayConfiguration;
+  reason: string;
+  object_id: string;
+  occurred_at: string;
+  state: "pending" | "published" | "failed";
+  error: string | null;
+}
+export interface GatewaySettings {
+  scope: GatewayScope;
+  max_rpm: number;
+  max_tpm: number;
+  version: number;
+  published_version: number | null;
+  desired: GatewayRevision | null;
+}

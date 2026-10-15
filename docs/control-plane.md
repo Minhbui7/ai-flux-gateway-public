@@ -101,6 +101,93 @@ See `/openapi.json` for the generated control-plane contract. The main routes ar
 | Historical usage models | `GET /api/usage/models`, `GET /api/admin/usage/models` |
 | IDS onboarding | `/api/admin/organizations`, `/api/admin/members` |
 | IDS showback / safety / prices | `/api/admin/usage`, `/api/admin/safety`, `/api/admin/prices` |
+| IDS gateway settings / history / reconcile | `/api/admin/gateway-settings`, `/{scope}/history`, `/{scope}/reconcile` |
+
+### Admin-managed gateway settings
+
+This feature is opt-in for the guarded development APIs, not production `/v1`.
+Terraform `dev_admin_settings_enabled` controls the fragment resources, narrowly
+scoped identity permissions and `AIFLUX_GATEWAY_SETTINGS_SCOPES`. With no scopes,
+the settings list is empty and mutations fail explicitly; existing code-managed
+settings are unchanged. Never set the application environment variable alone.
+
+Only approved home-tenant `ids_admin` principals can list, publish, reconcile or
+read history. The customer portal has no settings controls. Scope is API-wide:
+`dev-openai` (`/dev/v1`) or, when deployed, `dev-unified` (`/dev/llm/v1`).
+There are no tenant overrides, inspection-disable switches or caller-supplied
+ARM targets/XML. Completion ceilings, provider/alias allowlists, PII, Prompt Shields,
+all three Content Safety checks and production activation remain operator-owned.
+
+| Setting | Accepted values |
+| --- | --- |
+| `safety_threshold` | Integer 0-7, shared by Hate, SelfHarm, Sexual and Violence on original input, redacted input and output. Higher is more permissive; zero is not off. |
+| `rpm` | Integer 1-2 requests/minute |
+| `tpm` | Integer 1-2048 for `dev-openai`; 1-20000 for `dev-unified` |
+| `token_quota` | Explicit positive integer, at most 2147483647 prompt + completion tokens; this is a representation bound, not a recommended budget |
+| `quota_period` | `Hourly`, `Daily`, `Weekly`, `Monthly` or `Yearly`, native UTC fixed window |
+
+No threshold or quota is seeded. Enabling the feature initially denies inference
+with 503 until an admin publishes a complete, explicitly approved configuration.
+The original explicit Terraform safety prerequisite remains required.
+
+`GET /api/admin/gateway-settings` returns desired configuration, version, latest
+published version, publication state and sanitized failure per enabled scope.
+`PUT /api/admin/gateway-settings/{scope}` takes `expected_version` (0 for initial
+configuration), `configuration` containing every field above, and a nonempty
+`reason` (maximum 500 characters). Values must be JSON integers, not strings,
+booleans or fractional numbers. Unknown fields and scopes are rejected.
+
+SQL stores revisions before publication. The settings fragment is rendered only
+from validated values and published with its exact APIM ETag. Readback must match
+before a revision becomes `published`; an APIM response alone is not enough.
+Stale version, unrecognized fragment drift or another pending revision produces
+409, not a blind overwrite. APIM publication/readback failure produces 502 and a
+durable failed revision. Retry using
+`POST /api/admin/gateway-settings/{scope}/reconcile` with `expected_version`.
+This also detects a previous write that succeeded remotely before a timeout/crash,
+without reapplying it. Reconciliation is explicit and durable, not fire-and-forget;
+there is no automatic worker or claim of automatic convergence.
+
+`published` means matching management-plane readback, **not** live, atomic
+gateway-wide enforcement. APIM propagation is eventual: old settings may continue
+to be enforced while a revision propagates. The request-scoped threshold is
+captured with its RPM/TPM/quota snapshot by a single inbound fragment and reused
+for all inspection passes. A missing fragment/threshold or inspection failure
+does not bypass safety. For urgent tightening, the operator must block affected
+traffic using the existing inference gate before publishing and verifying the
+new revision; this feature does not promise an immediate distributed cutover.
+
+`GET /api/admin/gateway-settings/{scope}/history?offset=0&limit=50` is paginated
+(maximum 100). Immutable configuration, reason, actor and time are retained;
+publication status/error can change during retry. Existing `AuditEvent` rows link
+requested, published and failed operations to `scope:version`. Reasons must not
+contain prompts, responses, keys, entity mappings or other sensitive content.
+Reverting means selecting a prior history configuration and publishing it as a
+new version with a new reason and approval, never rewriting history.
+Reconcile failed/pending publication first; an out-of-band fragment conflict needs
+operator recovery to a known reviewed snapshot before retrying.
+
+Managed counter keys are stable `rpm:{scope}:{subscription}:{alias}` and
+`tpm:{scope}:{subscription}:{alias}`. This deliberately isolates the two dev APIs
+because they have different TPM ceilings; legacy keys omitted API scope. Initial
+opt-in changes the namespace and effectively starts new counters. Later settings
+revisions do not change keys; changing quota periods can change reset behavior.
+Native rate denial is 429, native quota denial is 403 (`token_quota_exceeded`),
+and safety denial is a separate 403 (`content_safety_rejected`). Dependency errors
+remain fail-closed 503. Native counts are gateway-local, estimated and may overshoot
+under concurrency; they are not strict global billing/spend enforcement.
+
+Use migration `0002` before deploying this API version. Package the bootstrap
+fragment (`gateway/policies/settings-unconfigured.xml`) as in the API Dockerfile.
+Terraform owns the invariant API policy and all backends, and only ignores the
+runtime fragment's `body.properties.value`. The API identity has read/write rights
+only at the exact settings-fragment resources, not service-wide policy or backend
+write. A subsequent Terraform apply must preserve published fragment values.
+An intentional fragment replacement resets it to denied and needs explicit
+republication. Do not treat reverting application code, changing activation flags,
+or running Terraform as a substitute for audited configuration rollback.
+
+### Minute usage charts
 
 Showback, minute charts, and CSV accept an optional `model` string, matched against
 the recorded usage model (including historical models absent from the active

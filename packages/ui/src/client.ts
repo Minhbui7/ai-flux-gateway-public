@@ -1,5 +1,6 @@
 import type {
-  CatalogModel, KeyName, Me, Member, Organization, Paged, Price, PriceInput, SafetyEvent,
+  CatalogModel, GatewayConfiguration, GatewayRevision, GatewayScope, GatewaySettings,
+  KeyName, Me, Member, Organization, Paged, Price, PriceInput, SafetyEvent,
   Subscription, SubscriptionState, UsageFilters, UsagePage, UsageQuery, UsageSeries, UsageSeriesQuery,
 } from "./types";
 
@@ -116,6 +117,13 @@ export class ControlApi {
     this.json<Paged<SafetyEvent>>(`/admin/safety${qs({ days, organization_id: organizationId, offset, limit })}`);
 
   prices = () => this.json<Paged<Price>>("/admin/prices");
+  gatewaySettings = () => this.json<Paged<GatewaySettings>>("/admin/gateway-settings");
+  saveGatewaySettings = (scope: GatewayScope, expectedVersion: number, configuration: GatewayConfiguration, reason: string) =>
+    this.json<GatewaySettings>(`/admin/gateway-settings/${scope}`, { method: "PUT", json: { expected_version: expectedVersion, configuration, reason } });
+  reconcileGatewaySettings = (scope: GatewayScope, expectedVersion: number) =>
+    this.json<GatewaySettings>(`/admin/gateway-settings/${scope}/reconcile`, { method: "POST", json: { expected_version: expectedVersion } });
+  gatewaySettingsHistory = (scope: GatewayScope, offset = 0, limit = 10) =>
+    this.json<Paged<GatewayRevision>>(`/admin/gateway-settings/${scope}/history${qs({ offset, limit })}`);
   endPrice = (id: string, effectiveTo: string) =>
     this.json<Price>(`/admin/prices/${encodeURIComponent(id)}/end`, { method: "PUT", json: { effective_to: effectiveTo } });
   createPrice = (input: PriceInput) => this.json<Price>("/admin/prices", { method: "POST", json: input });
