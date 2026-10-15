@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     entra_client_id: str = ""
     home_tenant_id: str = ""
     bootstrap_object_id: str = ""
+    home_organization_name: str = "Singtel IDS"
     required_scope: str = "access_as_user"
     gateway_url: str = ""
     gateway_max_completion_tokens: int | None = Field(default=None, ge=1, le=100000)

@@ -237,6 +237,8 @@ def main() -> None:
     parser.add_argument("--resource-group", required=True)
     parser.add_argument("--eastus-account", required=True)
     parser.add_argument("--sweden-account", required=True)
+    parser.add_argument("--output", type=Path, default=EVIDENCE_PATH)
+    parser.add_argument("--model-alias", action="append", help="Verify only these exact pinned aliases.")
     parser.add_argument(
         "--gateway-principal-id",
         required=True,
@@ -274,8 +276,13 @@ def main() -> None:
         )["accessToken"]
 
     specs = model_spec()
+    if args.model_alias:
+        unknown = set(args.model_alias) - specs.keys()
+        if unknown:
+            raise ValueError("Unknown selected model aliases")
+        specs = {alias: spec for alias, spec in specs.items() if alias in args.model_alias}
     try:
-        previous = json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
+        previous = json.loads(args.output.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         previous = {}
     evidence: dict[str, Any] = {
@@ -601,11 +608,11 @@ def main() -> None:
             )
     evidence["quota_preflight"] = quota_preflight
 
-    EVIDENCE_PATH.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
     print(
         json.dumps(
             {
-                "evidence": str(EVIDENCE_PATH),
+                "evidence": str(args.output),
                 "direct_backend_evidence_only": True,
                 "backends": [
                     {

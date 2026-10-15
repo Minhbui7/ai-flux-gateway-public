@@ -2,7 +2,7 @@ resource "azurerm_api_management" "main" {
   name                          = local.apim_name
   location                      = var.location
   resource_group_name           = local.rg
-  publisher_name                = "Singtel IDS"
+  publisher_name                = var.publisher_name
   publisher_email               = var.publisher_email
   sku_name                      = "BasicV2_${var.apim_capacity}"
   virtual_network_type          = "None"
@@ -56,9 +56,10 @@ resource "azurerm_api_management_product_api" "blocked" {
 }
 
 locals {
+  model_backends_path = var.model_backends_file != null ? var.model_backends_file : "${path.module}/../models/model-backends.json"
   model_descriptor = jsondecode(
-    fileexists("${path.module}/../models/model-backends.json") ?
-    file("${path.module}/../models/model-backends.json") :
+    fileexists(local.model_backends_path) ?
+    file(local.model_backends_path) :
     jsonencode({ subscription_id = var.subscription_id, backends = [] })
   )
   deployment_specs = jsondecode(file("${path.module}/../models/model-spec.json"))

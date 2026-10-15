@@ -1,5 +1,9 @@
 # Hybrid development Terraform and local operator runbook
 
+Customer installations use the [guarded-pilot deployment runbook](deployment.md).
+The environment-specific history below is not customer configuration or evidence
+of current customer readiness.
+
 ## Status provenance and review boundary
 
 [Capabilities](capabilities.md) is the canonical release/status matrix. The
