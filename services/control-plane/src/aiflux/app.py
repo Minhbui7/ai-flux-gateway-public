@@ -18,7 +18,7 @@ from aiflux.auth import Principal, TokenVerifier, get_admin, get_principal
 from aiflux.catalog import Catalog
 from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for, get_db
-from aiflux.finops import aware, create_price, usage_csv, usage_response, usage_series_response
+from aiflux.finops import aware, create_price, usage_csv, usage_models, usage_response, usage_series_response
 from aiflux.models import Base, Member, ModelPrice, Organization, SafetyEvent, TeamSubscription
 from aiflux.schemas import (
     CatalogOutput,
@@ -260,10 +260,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None,
         offset: int,
         limit: int,
+        model: str | None = None,
     ) -> dict:
         check_usage_subscription(db, organization_id, subscription_id)
         return usage_response(
-            db, organization_id, days, str(subscription_id) if subscription_id else None, offset, limit
+            db, organization_id, days, str(subscription_id) if subscription_id else None, offset, limit, model
         )
 
     @app.get("/api/usage", response_model=UsagePage)
@@ -274,8 +275,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=100),
+        model: str | None = None,
     ) -> dict:
-        return usage(db, principal.organization_id, days, subscription_id, offset, limit)
+        return usage(db, principal.organization_id, days, subscription_id, offset, limit, model)
+
+    @app.get("/api/usage/models", response_model=Page[str])
+    def customer_usage_models(
+        principal: User,
+        db: Db,
+        days: int = Query(30, ge=1, le=366),
+        subscription_id: UUID | None = None,
+    ) -> dict:
+        check_usage_subscription(db, principal.organization_id, subscription_id)
+        return usage_models(
+            db, principal.organization_id, days, str(subscription_id) if subscription_id else None,
+        )
+
+    @app.get("/api/admin/usage/models", response_model=Page[str])
+    def admin_usage_models(
+        principal: Admin,
+        db: Db,
+        days: int = Query(30, ge=1, le=366),
+        organization_id: UUID | None = None,
+        subscription_id: UUID | None = None,
+    ) -> dict:
+        org = str(organization_id) if organization_id else None
+        check_usage_subscription(db, org, subscription_id)
+        return usage_models(db, org, days, str(subscription_id) if subscription_id else None)
 
     def usage_series(
         db: Session,
@@ -284,6 +310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None,
         start: datetime | None,
         end: datetime | None,
+        model: str | None = None,
     ) -> dict:
         check_usage_subscription(db, organization_id, subscription_id)
         now = datetime.now(UTC)
@@ -300,7 +327,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             start, end = now - timedelta(days=days), now
         return usage_series_response(
-            db, organization_id, str(subscription_id) if subscription_id else None, start, end,
+            db, organization_id, str(subscription_id) if subscription_id else None, start, end, model,
         )
 
     @app.get("/api/usage/timeseries", response_model=UsageSeries)
@@ -311,8 +338,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        model: str | None = None,
     ) -> dict:
-        return usage_series(db, principal.organization_id, days, subscription_id, start, end)
+        return usage_series(db, principal.organization_id, days, subscription_id, start, end, model)
 
     @app.get("/api/admin/usage/timeseries", response_model=UsageSeries)
     def admin_usage_series(
@@ -323,15 +351,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        model: str | None = None,
     ) -> dict:
         return usage_series(
-            db, str(organization_id) if organization_id else None, days, subscription_id, start, end,
+            db, str(organization_id) if organization_id else None, days, subscription_id, start, end, model,
         )
 
-    def export(db: Session, org: str | None, days: int, subscription_id: UUID | None) -> Response:
-        usage(db, org, days, subscription_id, 0, 1)
+    def export(
+        db: Session, org: str | None, days: int, subscription_id: UUID | None, model: str | None,
+    ) -> Response:
+        check_usage_subscription(db, org, subscription_id)
         try:
-            content = usage_csv(db, org, days, str(subscription_id) if subscription_id else None)
+            content = usage_csv(db, org, days, str(subscription_id) if subscription_id else None, model)
         except ValueError as exc:
             raise HTTPException(413, str(exc)) from exc
         return Response(
@@ -348,8 +379,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Db,
         days: int = Query(30, ge=1, le=366),
         subscription_id: UUID | None = None,
+        model: str | None = None,
     ) -> Response:
-        return export(db, principal.organization_id, days, subscription_id)
+        return export(db, principal.organization_id, days, subscription_id, model)
 
     @app.get("/api/admin/usage", response_model=UsagePage)
     def admin_usage(
@@ -360,9 +392,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_id: UUID | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=100),
+        model: str | None = None,
     ) -> dict:
         return usage(
-            db, str(organization_id) if organization_id else None, days, subscription_id, offset, limit
+            db, str(organization_id) if organization_id else None, days, subscription_id, offset, limit, model
         )
 
     @app.get("/api/admin/usage/export")
@@ -372,8 +405,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         days: int = Query(30, ge=1, le=366),
         organization_id: UUID | None = None,
         subscription_id: UUID | None = None,
+        model: str | None = None,
     ) -> Response:
-        return export(db, str(organization_id) if organization_id else None, days, subscription_id)
+        return export(db, str(organization_id) if organization_id else None, days, subscription_id, model)
 
     @app.get("/api/admin/organizations", response_model=Page[OrganizationOutput])
     def organizations(principal: Admin, db: Db) -> dict:

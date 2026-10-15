@@ -141,7 +141,7 @@ def test_series_invalid_ranges_are_explicit(env, params):
 
 def test_series_query_compiles_for_sql_server_with_safe_aggregates():
     start = datetime(2026, 10, 1, tzinfo=UTC)
-    query = usage_series_query("mssql", "tenant", "subscription", start, start + timedelta(days=1))
+    query = usage_series_query("mssql", "tenant", "subscription", start, start + timedelta(days=1), "retired")
     sql = str(query.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "dateadd(minute, datediff(minute," in sql
     assert "GROUP BY dateadd(minute" in sql
@@ -150,6 +150,7 @@ def test_series_query_compiles_for_sql_server_with_safe_aggregates():
     assert "CAST(usage_records.output_tokens AS BIGINT)" in sql
     assert "usage_records.organization_id = 'tenant'" in sql
     assert "usage_records.subscription_id = 'subscription'" in sql
+    assert "usage_records.model = 'retired'" in sql
     assert " IS 1" not in sql and "strftime" not in sql
     bound_sql = str(query.compile(dialect=mssql.dialect()))
     assert bound_sql.count("CONVERT(datetime2, '20000101', 112)") == 6

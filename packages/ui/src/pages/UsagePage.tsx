@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError } from "../client";
 import { useSession } from "../session";
 import type { Organization, Paged, UsagePage as UsageData, UsageSeries, UsageSummary } from "../types";
@@ -24,32 +24,59 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
   const [days, setDays] = useState(30);
   const [subscriptionId, setSubscriptionId] = useState("");
   const [orgId, setOrgId] = useState("");
+  const [model, setModel] = useState("");
+  const [modelNotice, setModelNotice] = useState("");
   const [viewport, setViewport] = useState(() => initialViewport(30));
   const [offset, setOffset] = useState(0);
   const [exportError, setExportError] = useState<string>();
   const [exporting, setExporting] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const orgs = useAsync<Paged<Organization>>(() => (admin ? api.organizations() : Promise.resolve({ items: [], total: 0 })), [api, admin]);
   const subs = useAsync(() => (admin ? Promise.resolve({ items: [], total: 0 }) : api.subscriptions(0, 100)), [api, admin]);
+  const scope = JSON.stringify([admin, days, subscriptionId, orgId]);
+  const models = useAsync(async () => {
+    const q = { days, subscription_id: subscriptionId || undefined, organization_id: orgId || undefined };
+    const result = await (admin ? api.adminUsageModels(q) : api.usageModels(q));
+    return { scope, ...result };
+  }, [api, admin, days, subscriptionId, orgId]);
+  const availableModels = !models.loading && !models.error && models.data?.scope === scope ? models.data.items : undefined;
+  const modelsReady = availableModels !== undefined;
+  const modelRemoved = availableModels !== undefined && model !== "" && !availableModels.includes(model);
+  const selectedModel = modelRemoved ? "" : model;
+  const filterKey = JSON.stringify([scope, selectedModel, offset]);
+  const seriesKey = JSON.stringify([scope, selectedModel, viewport.start, viewport.end]);
+
+  useEffect(() => {
+    if (modelRemoved) {
+      setModel("");
+      setOffset(0);
+      setModelNotice(`Model "${model}" has no usage in this scope. Reset to All models.`);
+    }
+  }, [modelRemoved, model]);
+
   const state = useAsync(
-    () => {
-      const q = { days, offset, limit: LIMIT, subscription_id: subscriptionId || undefined, organization_id: orgId || undefined };
-      return admin ? api.adminUsage(q) : api.usage(q);
+    async () => {
+      const q = { days, offset, limit: LIMIT, subscription_id: subscriptionId || undefined, organization_id: orgId || undefined, model: selectedModel || undefined };
+      const data = await (admin ? api.adminUsage(q) : api.usage(q));
+      return { key: filterKey, data };
     },
-    [api, admin, days, subscriptionId, orgId, offset],
+    [api, admin, days, subscriptionId, orgId, selectedModel, offset],
   );
-  const seriesState = useAsync<UsageSeries>(
-    () => {
+  const seriesState = useAsync<{ key: string; data: UsageSeries }>(
+    async () => {
       const q = {
         days,
         subscription_id: subscriptionId || undefined,
         organization_id: orgId || undefined,
+        model: selectedModel || undefined,
         start: new Date(viewport.start).toISOString(),
         end: new Date(viewport.end).toISOString(),
       };
-      return admin ? api.adminUsageSeries(q) : api.usageSeries(q);
+      const data = await (admin ? api.adminUsageSeries(q) : api.usageSeries(q));
+      return { key: seriesKey, data };
     },
-    [api, admin, days, subscriptionId, orgId, viewport.start, viewport.end],
+    [api, admin, days, subscriptionId, orgId, selectedModel, viewport.start, viewport.end],
   );
 
   function resetViewport(rangeDays = days) {
@@ -84,7 +111,9 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
     setExporting(true);
     setExportError(undefined);
     try {
-      downloadBlob(await api.exportCsv(admin, days, orgId || undefined), `aiflux-usage-${admin ? "all" : "org"}-${days}d.csv`);
+      downloadBlob(await api.exportCsv(admin, {
+        days, organization_id: orgId || undefined, subscription_id: subscriptionId || undefined, model: selectedModel || undefined,
+      }), `aiflux-usage-${admin ? "all" : "org"}-${days}d.csv`);
     } catch (e) {
       setExportError(e instanceof ApiError ? e.detail : "Export failed.");
     } finally {
@@ -96,31 +125,40 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
     <>
       <PageHeader
         title={admin ? "Cross-organization showback" : "Usage & estimated cost"}
-        subtitle="Estimated showback from gateway telemetry and IDS-configured prices. It is not an invoice."
-        actions={<button className="btn" onClick={() => void exportCsv()} disabled={exporting}>{exporting ? "Preparing…" : "Export CSV"}</button>}
+        subtitle="Costs are estimates based on configured list prices. Actual charges may differ due to Singtel-specific discounts. This is not an invoice."
+        actions={<button className="btn" onClick={() => void exportCsv()} disabled={exporting || !modelsReady}>{exporting ? "Preparing…" : "Export CSV"}</button>}
       />
       {exportError && <ErrorState message={exportError} />}
+      {models.error && <ErrorState message={`Could not load usage models: ${models.error}`} onRetry={models.reload} />}
+      {modelNotice && <p role="status" className="notice">{modelNotice}</p>}
       <div className="filters">
         <Field label="Period">{(id) => (
-          <select id={id} value={days} onChange={(e) => { const next = Number(e.target.value); setDays(next); setOffset(0); resetViewport(next); }}>
+          <select id={id} value={days} onChange={(e) => { const next = Number(e.target.value); setModelNotice(""); setDays(next); setOffset(0); resetViewport(next); }}>
             {DAY_OPTIONS.map((d) => <option key={d} value={d}>Last {d} day{d > 1 ? "s" : ""}</option>)}
           </select>
         )}</Field>
         {admin ? (
           <Field label="Organization">{(id) => (
-            <select id={id} value={orgId} onChange={(e) => { setOrgId(e.target.value); setOffset(0); resetViewport(); }}>
+            <select id={id} value={orgId} onChange={(e) => { setModelNotice(""); setOrgId(e.target.value); setOffset(0); resetViewport(); }}>
               <option value="">All organizations</option>
               {orgs.data?.items.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           )}</Field>
         ) : (
           <Field label="Subscription">{(id) => (
-            <select id={id} value={subscriptionId} onChange={(e) => { setSubscriptionId(e.target.value); setOffset(0); resetViewport(); }}>
+            <select id={id} value={subscriptionId} onChange={(e) => { setModelNotice(""); setSubscriptionId(e.target.value); setOffset(0); resetViewport(); }}>
               <option value="">All subscriptions</option>
               {subs.data?.items.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}</Field>
         )}
+        <Field label="Model">{(id) => (
+          <select id={id} value={selectedModel} disabled={!modelsReady} onChange={(e) => { setModel(e.target.value); setModelNotice(""); setOffset(0); resetViewport(); }}>
+            <option value="">All models</option>
+            {!modelsReady && selectedModel && <option value={selectedModel}>{selectedModel}</option>}
+            {availableModels?.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        )}</Field>
       </div>
       <section className="usage-chart-section" aria-labelledby="usage-chart-heading">
         <div className="usage-chart-head">
@@ -134,15 +172,14 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
           </div>
         </div>
         <p className="muted chart-range">Viewport: {new Date(viewport.start).toISOString().replace("T", " ").slice(0, 16)} – {new Date(viewport.end).toISOString().replace("T", " ").slice(0, 16)} UTC</p>
-        {seriesState.loading && seriesState.data
-          ? <p role="status" className="muted">Updating chart data for this UTC viewport…</p>
-          : <AsyncView state={seriesState}>
+        {!modelsReady ? <p role="status" className="muted">Waiting for usage model options.</p>
+          : <AsyncView state={{ ...seriesState, data: seriesState.data?.key === seriesKey ? seriesState.data.data : undefined }}>
             {(series) => <UsageCharts series={series} start={viewport.start} end={viewport.end} />}
           </AsyncView>}
       </section>
-      <AsyncView state={state}>
-        {(d) => <UsageBody data={d} offset={offset} onPage={setOffset} showOrgNote={admin} />}
-      </AsyncView>
+      {modelsReady && <AsyncView state={{ ...state, data: state.data?.key === filterKey ? state.data.data : undefined }}>
+        {(d) => <UsageBody data={d} offset={offset} onPage={setOffset} showOrgNote={admin} detailsOpen={detailsOpen} onDetailsToggle={setDetailsOpen} />}
+      </AsyncView>}
     </>
   );
 }
@@ -162,10 +199,17 @@ export function costLabel(s: UsageSummary): { value: string; note: string; tone?
   const v = s.currency ? `${s.currency} ${s.known_cost}` : s.known_cost;
   return s.incomplete_requests > 0
     ? { value: v, note: `Lower bound: ${fmtInt(s.incomplete_requests)} request(s) lack complete usage or pricing.`, tone: "warn" }
-    : { value: v, note: "Estimated from configured prices." };
+    : { value: v, note: "Estimated from configured list prices." };
 }
 
-function UsageBody({ data, offset, onPage, showOrgNote }: { data: UsageData; offset: number; onPage: (o: number) => void; showOrgNote: boolean }) {
+function UsageBody({ data, offset, onPage, showOrgNote, detailsOpen, onDetailsToggle }: {
+  data: UsageData;
+  offset: number;
+  onPage: (o: number) => void;
+  showOrgNote: boolean;
+  detailsOpen: boolean;
+  onDetailsToggle: (open: boolean) => void;
+}) {
   const s = data.summary;
   const cost = costLabel(s);
   return (
@@ -187,32 +231,35 @@ function UsageBody({ data, offset, onPage, showOrgNote }: { data: UsageData; off
         <Stat label="Cache tokens" value={s.cache_tokens_supported ? "Supported" : "Unavailable"} note={s.cache_tokens_supported ? undefined : "Not natively reported for all callers"} />
         <Stat label="Last ingested" value={fmtDate(s.last_ingested_at)} note={s.last_ingested_at ? "Data may lag the latest requests" : "No telemetry ingested yet"} />
       </dl>
-      {data.items.length === 0 ? (
-        <EmptyState title="No requests in this period" hint="Usage appears here after requests are made through the gateway and telemetry is ingested." />
-      ) : (
-        <>
-          {showOrgNote && <p className="muted">Showing requests across organizations.</p>}
-          <Table caption="Request usage" head={["Time", "Model", "Region", "Status", "Input", "Output", ...(s.cache_tokens_supported ? ["Cached in", "Cache write"] : []), "Cost", "E2E (s)", ...(s.ttft_supported ? ["TTFT (s)"] : []), "Completeness"]}>
-            {data.items.map((r) => (
-              <tr key={r.id}>
-                <td>{fmtDate(r.occurred_at)}</td>
-                <td>{r.model}<small className="muted block">{r.provider}</small></td>
-                <td>{r.region}</td>
-                <td><Badge tone={r.status_code < 400 ? "ok" : r.status_code === 429 ? "warn" : "bad"}>{r.status_code}</Badge></td>
-                <td className="num">{fmtInt(r.input_tokens)}</td>
-                <td className="num">{fmtInt(r.output_tokens)}</td>
-                {s.cache_tokens_supported && <td className="num">{fmtInt(r.cached_input_tokens)}</td>}
-                {s.cache_tokens_supported && <td className="num">{fmtInt(r.cache_write_tokens)}</td>}
-                <td className="num">{r.cost === null ? <span title="Usage or price missing; not zero">Unknown</span> : `${r.currency ?? ""} ${r.cost}`.trim()}</td>
-                <td className="num">{fmtSecondsFromMs(r.e2e_ms)}</td>
-                {s.ttft_supported && <td className="num">{r.ttft_ms === null ? NA : fmtSecondsFromMs(r.ttft_ms)}</td>}
-                <td>{r.completeness === "complete" ? <Badge tone="ok">complete</Badge> : <Badge tone="warn">{r.completeness}</Badge>}</td>
-              </tr>
-            ))}
-          </Table>
-          <Pager offset={offset} limit={LIMIT} total={data.total} onChange={onPage} />
-        </>
-      )}
+      <details open={detailsOpen} onToggle={(e) => onDetailsToggle(e.currentTarget.open)}>
+        <summary>Transaction details</summary>
+        {data.items.length === 0 ? (
+          <EmptyState title="No requests in this period" hint="Usage appears here after requests are made through the gateway and telemetry is ingested." />
+        ) : (
+          <>
+            {showOrgNote && <p className="muted">Showing requests across organizations.</p>}
+            <Table caption="Request usage" head={["Time", "Model", "Region", "Status", "Input", "Output", ...(s.cache_tokens_supported ? ["Cached in", "Cache write"] : []), "Cost", "E2E (s)", ...(s.ttft_supported ? ["TTFT (s)"] : []), "Completeness"]}>
+              {data.items.map((r) => (
+                <tr key={r.id}>
+                  <td>{fmtDate(r.occurred_at)}</td>
+                  <td>{r.model}<small className="muted block">{r.provider}</small></td>
+                  <td>{r.region}</td>
+                  <td><Badge tone={r.status_code < 400 ? "ok" : r.status_code === 429 ? "warn" : "bad"}>{r.status_code}</Badge></td>
+                  <td className="num">{fmtInt(r.input_tokens)}</td>
+                  <td className="num">{fmtInt(r.output_tokens)}</td>
+                  {s.cache_tokens_supported && <td className="num">{fmtInt(r.cached_input_tokens)}</td>}
+                  {s.cache_tokens_supported && <td className="num">{fmtInt(r.cache_write_tokens)}</td>}
+                  <td className="num">{r.cost === null ? <span title="Usage or price missing; not zero">Unknown</span> : `${r.currency ?? ""} ${r.cost}`.trim()}</td>
+                  <td className="num">{fmtSecondsFromMs(r.e2e_ms)}</td>
+                  {s.ttft_supported && <td className="num">{r.ttft_ms === null ? NA : fmtSecondsFromMs(r.ttft_ms)}</td>}
+                  <td>{r.completeness === "complete" ? <Badge tone="ok">complete</Badge> : <Badge tone="warn">{r.completeness}</Badge>}</td>
+                </tr>
+              ))}
+            </Table>
+            <Pager offset={offset} limit={LIMIT} total={data.total} onChange={onPage} />
+          </>
+        )}
+      </details>
     </>
   );
 }
