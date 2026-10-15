@@ -3,6 +3,12 @@
 The FastAPI service provisions team subscriptions through APIM's ARM API. It does
 not forward model requests, store conversations, or execute tools.
 
+See the [technical specification](technical-specification.md) for configuration
+and data-flow context, [PRD](prd.md) for stories, and
+[security/approval guide](security-and-approvals.md) for operator/runtime rights.
+[Capabilities](capabilities.md) owns deployment-status interpretation. #10 /
+PR #14 usage-model discovery/filtering is pending, not a current-main API here.
+
 ## Local setup
 
 From the repository root in PowerShell:
@@ -66,6 +72,10 @@ parameters.
 
 ### MISE token validation and Microsoft SFI compliance
 
+This section describes integration intent and configured code paths, not a
+compliance attestation. Confirm the deployed validation mode and the customer's
+required evidence; telemetry headers alone do not establish SFI/MISE compliance.
+
 Under Microsoft Secure Future Initiative (SFI) guidelines and MISE Compliance KPI requirements,
 the control-plane API (`aiflux-fdpo-dev-api`, App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4`)
 supports compliant token authentication:
@@ -88,6 +98,7 @@ See `/openapi.json` for the generated control-plane contract. The main routes ar
 | Suspend / reactivate / reconcile | `PUT /api/subscriptions/{id}/state`, `POST .../reconcile` |
 | Scoped showback / export | `GET /api/usage`, `GET /api/usage/export` |
 | Scoped minute charts | `GET /api/usage/timeseries`, `GET /api/admin/usage/timeseries` |
+| Historical usage models | `GET /api/usage/models`, `GET /api/admin/usage/models` |
 | IDS onboarding | `/api/admin/organizations`, `/api/admin/members` |
 | IDS showback / safety / prices | `/api/admin/usage`, `/api/admin/safety`, `/api/admin/prices` |
 | IDS gateway settings / history / reconcile | `/api/admin/gateway-settings`, `/{scope}/history`, `/{scope}/reconcile` |
@@ -178,7 +189,23 @@ or running Terraform as a substitute for audited configuration rollback.
 
 ### Minute usage charts
 
-Minute chart queries accept `days` (1-366, default 30), `subscription_id`, and
+Showback, minute charts, and CSV accept an optional `model` string, matched against
+the recorded usage model (including historical models absent from the active
+catalog). Omitting it preserves all-model behavior. It applies before summary,
+p95, capability checks, transaction pagination, chart aggregation, and export
+limit evaluation; an unmatched model returns empty usage, not a zero cost.
+
+Historical model routes return `{ "items": ["model-name"], "total": 1 }` with
+sorted distinct names from all authorized usage in the selected `days` and
+`subscription_id` scope, plus `organization_id` for admins. Options are independent
+of selected model, transaction pagination, and chart viewport; they are not
+limited to the current page or callable catalog. Customer organization comes
+from the authenticated principal. Admin access and subscription ownership checks
+are the same as showback. A scope change that removes a selected model visibly
+resets the portal to All models only after successful option discovery; errors
+are surfaced without silently clearing the filter.
+
+Minute chart queries accept `days` (1-366, default 30), `subscription_id`, `model`, and
 optional paired timezone-qualified `start`/`end` timestamps for a viewport inside
 that period. IDS queries additionally accept `organization_id`. The same
 membership and subscription ownership checks as showback apply. The interval is
@@ -216,6 +243,11 @@ subscription. Secret reveal, rotation, membership changes and configuration
 changes write metadata-only audit records.
 
 ## Showback and native telemetry limits
+
+**Historical acceptance:** the three-model Function/workload results below
+precede the eleven-model expansion. The latest recorded runbook status is a
+pause on unowned smoke-test subscriptions, not fresh-ingestion acceptance.
+Current live state has not been reverified by this documentation.
 
 The existing Function now uses the supported Python v1 `function.json` binding
 model with shared `handlers.py` entry points. Decorator discovery returned zero
@@ -338,8 +370,14 @@ rewrite old projections: replay the relevant watermark window to reprice.
 
 Showback lists bounded records, known cost and completeness. Mixed currencies are
 never summed into one amount. CSV exports are capped at 10,000 records; narrow
-the time/subscription filter for larger data and use an IDS data-export process
+the time/subscription/model filter for larger data and use an IDS data-export process
 for bulk retrieval. CSV fields are protected against spreadsheet formula injection.
+CSV includes the full filtered period, not the visible transaction page or chart
+viewport, and is available even when the portal's default-collapsed transaction
+details are closed. Its columns and raw millisecond latency values are unchanged.
+Portal costs are estimates from configured list prices, not invoices; actual
+charges may differ due to Singtel-specific discounts. This disclosure does not
+change pricing calculations, apply discounts, or reprice historical usage.
 
 Safety records use an allowlisted metadata schema from an APIM trace with
 `source: "aiflux"` and metadata `category`/`action`. Arbitrary trace content and

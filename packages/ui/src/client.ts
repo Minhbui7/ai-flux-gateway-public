@@ -1,7 +1,7 @@
 import type {
   CatalogModel, GatewayConfiguration, GatewayRevision, GatewayScope, GatewaySettings,
   KeyName, Me, Member, Organization, Paged, Price, PriceInput, SafetyEvent,
-  Subscription, SubscriptionState, UsagePage, UsageQuery, UsageSeries, UsageSeriesQuery,
+  Subscription, SubscriptionState, UsageFilters, UsagePage, UsageQuery, UsageSeries, UsageSeriesQuery,
 } from "./types";
 
 export class ApiError extends Error {
@@ -83,17 +83,21 @@ export class ControlApi {
     this.json<Subscription>(`/subscriptions/${encodeURIComponent(id)}/state`, { method: "PUT", json: { state } });
   reconcile = (id: string) => this.json<Subscription>(`/subscriptions/${encodeURIComponent(id)}/reconcile`, { method: "POST" });
 
-  usage = (q: UsageQuery) => this.json<UsagePage>(`/usage${qs({ days: q.days, subscription_id: q.subscription_id, offset: q.offset, limit: q.limit })}`);
+  usage = (q: UsageQuery) => this.json<UsagePage>(`/usage${qs({ days: q.days, subscription_id: q.subscription_id, model: q.model, offset: q.offset, limit: q.limit })}`);
   adminUsage = (q: UsageQuery) =>
-    this.json<UsagePage>(`/admin/usage${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, offset: q.offset, limit: q.limit })}`);
+    this.json<UsagePage>(`/admin/usage${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, model: q.model, offset: q.offset, limit: q.limit })}`);
+  usageModels = (q: Omit<UsageFilters, "model">) =>
+    this.json<Paged<string>>(`/usage/models${qs({ days: q.days, subscription_id: q.subscription_id })}`);
+  adminUsageModels = (q: Omit<UsageFilters, "model">) =>
+    this.json<Paged<string>>(`/admin/usage/models${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id })}`);
   usageSeries = (q: UsageSeriesQuery) =>
-    this.json<UsageSeries>(`/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, start: q.start, end: q.end })}`);
+    this.json<UsageSeries>(`/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, model: q.model, start: q.start, end: q.end })}`);
   adminUsageSeries = (q: UsageSeriesQuery) =>
-    this.json<UsageSeries>(`/admin/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, start: q.start, end: q.end })}`);
+    this.json<UsageSeries>(`/admin/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, model: q.model, start: q.start, end: q.end })}`);
 
   /** Authenticated CSV export; the token travels only in the Authorization header. */
-  async exportCsv(admin: boolean, days: number, organizationId?: string): Promise<Blob> {
-    const path = admin ? `/admin/usage/export${qs({ days, organization_id: organizationId })}` : `/usage/export${qs({ days })}`;
+  async exportCsv(admin: boolean, q: UsageFilters): Promise<Blob> {
+    const path = `${admin ? "/admin" : ""}/usage/export${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: admin ? q.organization_id : undefined, model: q.model })}`;
     const res = await this.send(path, { headers: { Accept: "text/csv" } });
     return res.blob();
   }

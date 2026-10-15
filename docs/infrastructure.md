@@ -1,5 +1,26 @@
 # Hybrid development Terraform and local operator runbook
 
+## Status provenance and review boundary
+
+[Capabilities](capabilities.md) is the canonical release/status matrix. The
+sections below are dated operational records or conditional procedures, not
+fresh cloud readback. See the [technical specification](technical-specification.md)
+for components/configuration and [security/approvals](security-and-approvals.md)
+for customer permission and governance decisions.
+
+Current repository Key Vault configuration in `infra\terraform\main.tf` declares
+`bypass = "AzureServices"`. The later-declared bypass supersedes the older
+certificate-attempt record saying bypass was not enabled; `bypass = "None"` in
+`data.tf` belongs to Function storage. Neither proves certificate retrieval or
+HTTPS acceptance. The last recorded certificate failure below is historical;
+current TLS/WAF/origin acceptance remains unverified here.
+
+Subnet CIDRs are `network` inputs. The historical hybrid integration range below
+is not a customer default. B1 development records supersede earlier P1v3
+staging descriptions for that environment; source defaults/examples are not
+current SKU evidence. Latest recorded ingestion state is the expansion pause
+described next, not the earlier successful workload.
+
 ## Opt-in admin gateway settings
 
 The code supports `dev_admin_settings_enabled=false` by default. No live deployment
@@ -154,8 +175,9 @@ new compute, public data access or production/native-route enablement was made.
 
 Development uses **public app endpoints, Basic v2 APIM and Entra authorization**,
 with approved private endpoints only for SQL, Key Vault and Function storage.
-Application Gateway WAF_v2 is deployed in `edge-candidate`; its HTTPS listener
-currently fails Key Vault certificate validation and is not accepted for release.
+Application Gateway WAF_v2 was recorded in `edge-candidate`; its HTTPS listener
+failed Key Vault certificate validation in that record. Current acceptance is
+not established by the subsequent source bypass declaration.
 `infra\terraform` owns the existing VNet and the hybrid additions; do not apply
 `infra\operator` against that VNet (it is a separate, incompatible ownership root).
 No VM, mandatory private runner, NAT or private Terraform backend is introduced.
@@ -197,6 +219,10 @@ migrations and live API/Function SQL acceptance, independently of
 plane endpoint approval/DNS records do **not** prove application readiness.
 
 ### Microsoft SFI / MISE compliance for App Service API
+
+The implementation details below describe integration intent, not certification.
+Actual deployed validation and organizational acceptance require separate
+evidence; key-discovery telemetry headers alone are not compliance proof.
 
 To fulfill Microsoft Secure Future Initiative (SFI) requirements for Entra ID Application
 Registrations (specifically App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4` / `aiflux-fdpo-dev-api`),
