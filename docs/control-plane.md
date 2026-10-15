@@ -3,6 +3,12 @@
 The FastAPI service provisions team subscriptions through APIM's ARM API. It does
 not forward model requests, store conversations, or execute tools.
 
+See the [technical specification](technical-specification.md) for configuration
+and data-flow context, [PRD](prd.md) for stories, and
+[security/approval guide](security-and-approvals.md) for operator/runtime rights.
+[Capabilities](capabilities.md) owns deployment-status interpretation. #10 /
+PR #14 usage-model discovery/filtering is pending, not a current-main API here.
+
 ## Local setup
 
 From the repository root in PowerShell:
@@ -65,6 +71,10 @@ requests cannot select another organization's context via headers or query
 parameters.
 
 ### MISE token validation and Microsoft SFI compliance
+
+This section describes integration intent and configured code paths, not a
+compliance attestation. Confirm the deployed validation mode and the customer's
+required evidence; telemetry headers alone do not establish SFI/MISE compliance.
 
 Under Microsoft Secure Future Initiative (SFI) guidelines and MISE Compliance KPI requirements,
 the control-plane API (`aiflux-fdpo-dev-api`, App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4`)
@@ -129,6 +139,11 @@ subscription. Secret reveal, rotation, membership changes and configuration
 changes write metadata-only audit records.
 
 ## Showback and native telemetry limits
+
+**Historical acceptance:** the three-model Function/workload results below
+precede the eleven-model expansion. The latest recorded runbook status is a
+pause on unowned smoke-test subscriptions, not fresh-ingestion acceptance.
+Current live state has not been reverified by this documentation.
 
 The existing Function now uses the supported Python v1 `function.json` binding
 model with shared `handlers.py` entry points. Decorator discovery returned zero

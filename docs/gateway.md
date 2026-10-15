@@ -1,5 +1,11 @@
 # APIM gateway: production disabled, guarded development route deployed
 
+This runbook mixes implementation instructions and dated development records;
+neither is current cloud verification. [Capabilities](capabilities.md) owns the
+canonical status and separates guarded development from native release gates.
+See [technical specification](technical-specification.md) and
+[security/approval readiness](security-and-approvals.md) for system boundaries.
+
 ## Latest guarded adapter (2026-10-12)
 
 The user explicitly approved a non-native fallback. Terraform now owns a
@@ -10,10 +16,11 @@ No keys are compared manually and native subscription validation stays enabled.
 The original two-model `/dev/v1` API and product keep their existing behavior.
 
 The adapter reuses `dev-openai.xml.tftpl` with an explicit mode. The checked-in
-catalog continues to expose the original three aliases (`gpt-5.6-luna`,
-`gpt-5.6-sol`, and `claude-haiku-5-5`); the eight requested new aliases are
-complete but disabled placeholders until their direct and guarded gateway smoke
-evidence passes. They are never added to the original `/dev/v1` two-model API.
+development catalog now contains eleven enabled aliases: the original three
+(`gpt-5.6-luna`, `gpt-5.6-sol`, `claude-haiku-5-5`) and eight expansion aliases.
+The 2026-10-14 infrastructure record describes direct and guarded acceptance
+before publication. Earlier three-model checks below predate this expansion.
+New aliases are never added to the original `/dev/v1` two-model API.
 See [model deployment and acceptance](../infra/models/README.md) for exact
 regions, quota budgets, and release commands.
 
@@ -70,7 +77,9 @@ Haiku essay completed with 5,241 words, 11,673 reported completion tokens,
 This verifies one long buffered response, not an unlimited-generation guarantee.
 Streaming remains disabled.
 Input size/message/history bounds and all safety/PII checks are unchanged.
-Retry accounting is still incomplete; ingestion remains disabled.
+Retry accounting is still incomplete. Ingestion was disabled at this earlier
+adapter snapshot; later activation/reconciliation and the subsequent unowned-row
+pause are recorded in [Infrastructure](infrastructure.md).
 
 APIM CORS is the first adapter inbound policy, before inherited gates; this
 allows unauthenticated preflight processing. Only the exact configured customer

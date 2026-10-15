@@ -1,91 +1,109 @@
-# Capability matrix and launch blockers
+# Capability matrix and evidence boundaries
 
-Public-dev architecture revised on 2026-10-11. **No live Azure gateway or model
-tests have been run.** A synthetic Foundry Language PII endpoint smoke test passed
-with an operator AAD token; it does not validate gateway identity or policy. Region/RG
-metadata is not feature evidence. The machine-readable
-manifest is `gateway\capabilities.json`; acceptance cases are
-`gateway\validation\scenarios.json`.
+This is the canonical documentation status matrix. The baseline is the merged
+model/analytics expansion in PR #13; #10's usage PR #14 is pending at authoring.
+These are repository and recorded-history statements, **not fresh cloud
+verification**. Detailed chronological records remain in the linked runbooks.
 
-| Requirement | Current implementation/evidence | Release status |
+## Reading evidence
+
+| Label | Meaning |
+| --- | --- |
+| Repository | Source implements a contract, or IaC conditionally declares a resource. Defaults are not deployed inputs. |
+| Historical acceptance | A dated runbook or user confirmation records a bounded outcome. It does not prove current state or broader journeys. |
+| Live unverified | No current acceptance is established here; a past success or failure is not a new observation. |
+| Proposed | An issue/design option, not supported behavior. |
+
+Use code/contracts for behavior, Terraform inputs for defaults/conditions,
+catalogs for declared eligibility and scoped records for historical outcomes.
+Vendor documentation establishes platform semantics, not local deployment.
+Do not change a release flag or attestation to reconcile prose.
+
+## Implemented and recorded scope
+
+| Surface | Repository behavior / source | Acceptance boundary |
 | --- | --- | --- |
-| Public development edge | Public Basic v2 APIM, public authenticated data/apps, sole AppGW subnet/service endpoint, local protected state, then public WAF_v2 HTTPS; no private endpoints/integration/VM/runner dependency | Certificate/ACME renewal, Entra/images, WAF/backend/SQL firewall acceptance and native direct-APIM origin-bypass proof remain unverified |
-| APIM-only inference | Unpublished Product, two subscription-required placeholder operations, unconditional 503/no backend | **Blocked**, not an inference API |
-| Native unified OpenAI interface | Documentation promises Chat Completions/Anthropic translation; portal-only instructions | Reproducible native ARM/IaC artifact absent |
-| OpenAI SDK bearer key | Native unified docs contain SDK example; placeholder accepts only native header validation | Native validation order/extraction/conflicts/product scope unverified |
-| Foundry/OpenAI/Anthropic-on-Azure | No fake models; empty catalog contract | Deployment access/version/format/auth/public connectivity/eligibility unverified; no deterministic Basic v2 outbound IP assumed |
-| PII input redaction | Public keyless Microsoft Foundry `AIServices` S0 account and gateway-scoped `Cognitive Services User` role; synthetic email detected/redacted through Language PII REST using operator AAD | Gateway managed-identity call/policy is not proven; no whole-request handling, structure/Unicode coverage, or fail-closed behavior acceptance |
-| Input/output harm + Prompt Shields | Public keyless Content Safety account/MI/RBAC; documented native policy | Original/redacted checks/fail-closed behavior unverified |
-| Live SSE safety | Native sliding-window stop documented; AppGW buffering disabled; no edge cache | Incremental timing/window/overlap/errors/cancellation unverified; delivered content cannot be withdrawn |
-| Tools/tool arguments/history | Advertised only by future reviewed per-model catalog | Translation/PII/safety coverage **unverified**; must block unless proved |
-| Strict JSON/structured output | No schema-breaking redaction or silent field drop allowed | Translation/string/typed value/stream moderation unverified |
-| Per-model region pools | Catalog endpoint/priority/weight contract; documented native pool/circuit capabilities | Native alias integration/auth/actual selected endpoint/Retry-After/retries unverified |
-| RPM/TPM/token quotas | IDS configuration contract, native llm-token-limit documented | No production policies activated; v2 best-effort gateway-local token buckets and concurrent overshoot |
-| Metadata usage logging | Documented preview metadata-only APIM diagnostics; request/backend headers empty, HTTP bytes 0, LLM message settings omitted | No-payload/correlation/completeness/sink audit unverified |
-| Selected provider/region | Response header allowlist reserved; no synthetic values emitted | Must come from actual endpoint selection; pool/gateway region insufficient |
-| Prompt/completion/total tokens | Native LlmLog documented fields | Live coverage unverified; terminated/cancelled streams may be incomplete |
-| Cached-read/cache-write tokens | Native per-request LlmLog contract lacks fields | **Unsupported in current native log source**; must remain unavailable, not zero |
-| True TTFT | Native per-request log contract lacks first-content timestamp | **Unsupported in current native log source**; E2E/header/playground timing is not a substitute |
-| Retry accounting | Native logs may not account every provider attempt | Incomplete estimates; retries are not assumed free |
-| SQL/Monitor/runtime identity | Public Entra-only SQL with exact operator/app outbound firewall rules, per-host MI/RBAC/config and SQL bootstrap script | Two-pass outbound rule setup, migrations/grants/runtime token acquisition require live validation |
-| Function projections | Disabled public keyless Function/storage; no anonymous blob access | Code deployment/schema/bounds/watermarks/token semantics not live verified |
+| Customer and IDS portals | React entry points share `packages/ui`; missing required configuration denies rendering | Historical basic customer sign-in/reconcile/reveal/playground confirmed; not complete IDS or multi-tenant acceptance |
+| Tenant isolation | `auth.py` verifies delegated identity/scope and enabled SQL organization/member; IDS role restricted to home tenant | UI role display, Entra app role and callback HTTP 200 are not backend authorization evidence |
+| Team subscriptions | SQL ownership before APIM activation; idempotent creation, reconcile, reveal, rotate and state operations | ARM failures surface explicitly; organization disable can leave suspension incomplete and requires retry |
+| Guarded adapter | `dev-unified.tf`, `dev-openai.xml.tftpl`, `openapi-dev-adapter.json`: conditional `/dev/llm/v1` ordinary HTTP API, subscription required | Historical completions; not native unified preview |
+| Legacy dev route | Separate `/dev/v1`, original OpenAI route/product | Does not inherit adapter aliases or limits |
+| Model catalog | `gateway/catalog/dev-models.json` contains eleven enabled aliases; production catalog/gates separate | Later expansion records direct and guarded checks before publication; per-model backend count varies |
+| PII and safety | Original input safety/Prompt Shields, five-document PII batches, redacted input safety and buffered output moderation | Bounded historical checks, not comprehensive adversarial coverage; failed dependencies must not release an unchecked answer |
+| Provider translation | OpenAI, Foundry Direct and Anthropic branches; validated thinking blocks omitted from returned answer, usage preserved | Unknown/malformed/internal-only responses fail closed; no tool execution |
+| Guarded streaming/tools/strict JSON | Rejected by guarded adapter | Future catalog capability controls do not enable these on this route |
+| Limits | Configured RPM/TPM per subscription/model, per-model output bounds; adapter product cap 10 | Counters approximate; historical 2 RPM overshoot observed; TPM is not a per-request output ceiling or spend cap |
+| Showback and charts | SQL projections, effective-dated prices, scoped rows/export and UTC minute charts | List-rate estimates; missing metrics/prices Unknown, partial totals lower bounds; millisecond API/CSV contracts preserved |
+| Ingestion | Function v1 bindings, bounded overlap replay, durable watermark after transaction | Historical 68-request three-model reconciliation; later recorded pause on 45 unowned smoke-test rows; fresh usage acceptance not established |
+| Cache/TTFT metrics | Native source lacks documented per-request cache/first-token fields; guarded `finops-v1` supplements validated cache counters | Native cache categories and true TTFT remain unsupported unless source semantics demonstrated; E2E is not TTFT |
+| Retry accounting | Bounded buffered transient retry; completeness flags in ingestion | Not every paid provider attempt is proven observable; never assume retries free |
+| Hybrid private data | Conditional SQL/vault/blob/queue/table endpoints; API/Function integration and SQL Proxy | Historical private readiness; current connectivity not rechecked; portal/APIM/Foundry endpoints are not made private by this |
+| Edge / certificate | Conditional App Gateway; vault declares `AzureServices` bypass and vault-scoped edge reader | Older certificate failure predates bypass change; no subsequent TLS/origin acceptance established by this documentation |
+| MISE | Optional loopback sidecar branch or direct JWT/key-discovery branch with telemetry headers | Configuration and headers are not compliance certification or proof of deployed sidecar validation |
 
-## Precise externally supplied artifact gate
+Original adapter development overrides were recorded as 2 RPM, 20,000 TPM and
+100,000 output tokens for original aliases; new aliases use a 4,096 output bound.
+The Terraform defaults remain more conservative. See [Gateway](gateway.md) and
+[model specifications](../infra/models/model-spec.json), not prose, for exact
+per-model/configuration constraints.
 
-The public native API must remain disabled until IDS supplies and reviews:
+## Native production gates remain closed
 
-1. The actual reproducible native unified-model resource/policy artifact and official
-   ARM contract/API version, verified for the selected Basic v2 tier/rollout.
-2. Native bearer-key/product-scope proof (not secret comparisons or subscription bypass).
-3. Per-provider/model/region capability/access matrix and endpoint equivalence.
-4. Structured PII/input safety/Prompt Shields/output safety coverage and fail-closed
-   dependency-error evidence, including accepted tools/strict-JSON and live SSE.
-5. Regional pool/circuit/retry-after/never-retry-partial-stream evidence.
-6. Per-subscription/per-alias IDS quota/config values and isolated counter checks.
-7. Native actual-endpoint metadata, correlations, usage/completeness and no-sensitive-log audit.
-8. Dated reviewer identity/environment/artifact hashes and expiry; rerun on relevant changes.
-9. `public_edge_origin` acceptance: TLS/WAF, App Service/SCM restrictions, SQL exact IP
-   rules and **native direct-APIM bypass denial before inference release**. Public
-   endpoint reachability alone is not WAF/origin-control evidence.
+`gateway/capabilities.json` has `inference_enabled=false`,
+`product_published=false`, no native artifact/attestation and unverified gates.
+It describes the native release bundle, not the separate development product.
+Production/native `/v1` and experimental `/llm/v1` must not be advertised as
+accepted inference paths.
 
-`attestation.example.json` is a blank handoff form, **not a signed certificate or evidence**.
-Supplying it cannot turn on anything. No valid native implementation can be derived safely
-from current published API schemas, so further reviewed code is required as well as evidence.
-Do not enable a model merely because a portal creation or one ordinary text request worked.
+Before native release, require reproducible tier/rollout-specific IaC,
+subscription bearer/product-scope proof, provider/model/region eligibility,
+structured PII and original/redacted safety, Prompt Shields, output/SSE coverage,
+tools/strict-JSON inspection, actual endpoint attribution, Retry-After/failover
+and no-partial-stream retry proof, isolated quota checks, and metadata-only
+correlation/completeness evidence. Final edge acceptance additionally needs
+TLS/WAF/origin restrictions and direct-APIM bypass denial.
 
-## Verified local results versus missing live evidence
+`gateway/validation/scenarios.json` and `attestation.example.json` define the
+review handoff. A blank example is not an approval or executable native
+implementation. Record reviewer, environment, artifact hash, scope and expiry;
+revalidate when relevant behavior changes.
 
-The provided local validation script runs provider-schema checks and **mocked-provider**
-plan tests for public deployment plus deferred operator/state roots, and standard-library
-gateway contracts. These tests do not spend Azure credits or prove
-regional/preview behavior. The bundle release check intentionally fails with exit 2.
-The bounded live probe only checks disabled posture and must not be used as release acceptance.
+## Reconciliation ledger
 
-No custom inference proxy/observer, tool executor, payload logger or metric fabrication is
-added to hide native gaps. The original cache/TTFT telemetry requirement is an explicit
-unmet requirement under the approved APIM-only constraint. An alternative native source
-may be considered only after per-request semantics/provider coverage are demonstrated.
+| Conflicting historical claims | Canonical interpretation |
+| --- | --- |
+| Three aliases / preview tiles versus eleven callable aliases | Three-model acceptance predates expansion; current dev catalog declares eleven. Neither implies native release. |
+| Ingestion disabled, enabled/reconciled, then paused | Distinct snapshots. Latest recorded blocker is unowned test telemetry; no automatic ownership assignment or watermark advance. |
+| Key Vault bypass disabled versus `AzureServices` | Earlier runbook record predates current `main.tf`; storage `None` is unrelated. Certificate success remains live unverified. |
+| Integration `.2.0/24` versus `.4.0/24` | Subnet is a required hybrid input. Historical runbook uses `.4`; diagrams now use input names instead of asserting live CIDRs. |
+| Public apps versus operator-restricted origins | Approved direct-dev mode and staged edge restrictions are distinct configurations; direct-dev is not final origin-protection acceptance. |
+| P1v3 staging examples versus B1 development records | Input/stage examples are not current SKU readback; B1 preservation is recorded development direction. |
 
-## Accepted design limitations, independent of missing evidence
+## Proposed and excluded
 
-- Shared global region pools can process data across borders; disclose this to tenants.
-- Native v2 deployment is single gateway region; backend failover is not gateway-region DR.
-- Streaming safety has residual risk: already-delivered chunks cannot be withdrawn.
-- Distributed pools/circuit state/distribution and rate/token counters are approximate.
-- Showback is an estimate; missing usage/prices/cache categories reduce coverage rather than
-  becoming zero-cost usage. Preserve provider cache/reasoning semantics and effective prices.
-- No Responses/Assistants/audio/images/agent endpoints, conversation memory, tool execution,
-  semantic cache, or customer-editable limits in this release.
+#10 / [PR #14](https://github.com/ajanakiraman_microsoft/ai-flux-gateway/pull/14)
+adds model filtering/discovery, collapsed transactions and pricing disclosure;
+it is not merged baseline behavior here. #9 admin safety/limit editing, #11
+customer one-click deployment and #8 stateless Auto classification are proposed.
+No Responses/Assistants/audio/images/agent endpoints, tool executor, semantic
+cache or subscription conversation memory is provided by the guarded release.
 
-## Source-of-truth references
+Accepted design limitations include cross-border model pools, one gateway
+region, approximate distributed counters and estimate-only showback. Future SSE
+moderation cannot withdraw already delivered content. See [PRD](prd.md),
+[security readiness](security-and-approvals.md) and [roadmap](roadmap.md).
 
-- [Native unified API preview](https://learn.microsoft.com/azure/api-management/unified-model-api)
-- [Native safety/stream window semantics](https://learn.microsoft.com/azure/api-management/llm-content-safety-policy)
-- [Native token limit behavior](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)
+## Validation sources
+
+Local contract tests and mocked Terraform tests do not spend Azure credits or
+prove service availability. `validate_bundle.py` validates the disabled bundle
+posture by default; release mode must reject an unaccepted bundle. Live probes
+need separate approved scope/cost and cannot turn a local pass into release proof.
+
+- [Native unified API](https://learn.microsoft.com/azure/api-management/unified-model-api)
+- [Safety policy](https://learn.microsoft.com/azure/api-management/llm-content-safety-policy)
+- [Token limits](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)
 - [Native LLM logging](https://learn.microsoft.com/azure/api-management/api-management-howto-llm-logs)
-- [Documented LlmLog columns](https://learn.microsoft.com/azure/azure-monitor/reference/tables/apimanagementgatewayllmlog)
-- [Backend pools/circuit breakers](https://learn.microsoft.com/azure/api-management/backends)
-- [Basic v2 and other v2 constraints](https://learn.microsoft.com/azure/api-management/v2-service-tiers-overview)
-- [Canonical AI Gateway labs](https://github.com/Azure-Samples/AI-Gateway)
-- [Hub accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator)
-- [Terraform counterpart](https://github.com/Azure/terraform-ai-gateway-landing-zone)
+- [Native log schema](https://learn.microsoft.com/azure/azure-monitor/reference/tables/apimanagementgatewayllmlog)
+- [Backend pools/circuits](https://learn.microsoft.com/azure/api-management/backends)
+- [v2 tier constraints](https://learn.microsoft.com/azure/api-management/v2-service-tiers-overview)

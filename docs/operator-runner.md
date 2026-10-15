@@ -2,7 +2,8 @@
 
 **Not the active development deployment plan.** Public Basic v2 dev now uses the
 local operator route in [Infrastructure](infrastructure.md), protected local state
-and only an isolated AppGW subnet. No VM/runner/NAT/state bootstrap is required.
+and conditional hybrid private-data endpoints/API-Function integration in the
+active root. No VM/runner/NAT/state bootstrap is required.
 The artifacts below retain an unapproved future private design. Do not apply them
 to the public root's same VNet/name space: no ownership transfer is implemented.
 
