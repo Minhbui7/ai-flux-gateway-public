@@ -1,11 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../client";
-import { chatCompletion, type ChatMessage, type ChatResult } from "../chat";
+import { buildChatCompletionBody, chatCompletion, chatCompletionUrl, textChatRequest, type ChatMessage, type ChatRequest, type ChatResult } from "../chat";
 import { useSession } from "../session";
 import type { KeyName } from "../types";
-import {
-  buildToolChoice, supportsStructured, supportsTools, validateResponseFormat, validateTools, type ToolChoiceMode,
-} from "../validation";
+import { buildToolChoice, supportsStructured, supportsTools, validateResponseFormat, validateTools, type ToolChoiceMode } from "../validation";
 import { AsyncView, Badge, EmptyState, Field, PageHeader, useAsync } from "../components/ui";
 
 interface Turn {
@@ -14,26 +12,9 @@ interface Turn {
   result?: ChatResult;
 }
 
-const SAMPLE_TOOLS = `[
-  {
-    "type": "function",
-    "function": {
-      "name": "get_weather",
-      "description": "Get the current weather for a city",
-      "parameters": {
-        "type": "object",
-        "properties": { "city": { "type": "string" } },
-        "required": ["city"]
-      }
-    }
-  }
-]`;
-const SAMPLE_SCHEMA = `{
-  "type": "object",
-  "properties": { "answer": { "type": "string" } },
-  "required": ["answer"],
-  "additionalProperties": false
-}`;
+const SAMPLE_PROMPT = "Say hello in one sentence.";
+const SAMPLE_TOOLS = '[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]';
+const SAMPLE_SCHEMA = '{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}';
 
 export function outcomeView(r: ChatResult): { tone: "ok" | "warn" | "bad" | "info"; label: string; text: string } | null {
   switch (r.outcome) {
@@ -97,23 +78,86 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
   const [fmt, setFmt] = useState<"text" | "json_object" | "json_schema">("text");
   const [schemaName, setSchemaName] = useState("response");
   const [schemaText, setSchemaText] = useState(SAMPLE_SCHEMA);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState<ChatResult | null>(null);
   const [formError, setFormError] = useState<string>();
   const [revealMsg, setRevealMsg] = useState<string>();
   const abort = useRef<AbortController | null>(null);
+  const codeButton = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const busy = live?.outcome === "streaming";
 
   const model = models.find((m) => m.id === modelId)!;
   const toolsOk = supportsTools(model.capabilities);
   const schemaOk = supportsStructured(model.capabilities);
   const streamOk = model.capabilities.includes("stream");
+  const toolsCheck = useMemo(() => useTools && toolsOk ? validateTools(toolsText) : null, [useTools, toolsOk, toolsText]);
+  const toolNames = toolsCheck?.ok ? toolsCheck.value.map((t) => (t as { function: { name: string } }).function.name) : [];
+  const fmtCheck = useMemo(() => fmt !== "text" && schemaOk ? validateResponseFormat(fmt, schemaName, schemaText) : null, [fmt, schemaOk, schemaName, schemaText]);
   const revealed = keys[subId]?.primary ?? keys[subId]?.secondary;
   const key = revealed ?? pasted.trim();
 
-  const toolsCheck = useMemo(() => (useTools && toolsOk ? validateTools(toolsText) : null), [useTools, toolsOk, toolsText]);
-  const toolNames = toolsCheck?.ok ? toolsCheck.value.map((t) => (t as { function: { name: string } }).function.name) : [];
-  const fmtCheck = useMemo(() => (fmt !== "text" && schemaOk ? validateResponseFormat(fmt, schemaName, schemaText) : null), [fmt, schemaOk, schemaName, schemaText]);
+  const exampleMessages: ChatMessage[] = [
+    ...(system.trim() ? [{ role: "system", content: system.trim() } as ChatMessage] : []),
+    { role: "user", content: input.trim() || SAMPLE_PROMPT },
+  ];
+  function requestFor(messages: ChatMessage[]): ChatRequest {
+    const request = textChatRequest(modelId, messages, model.max_completion_tokens);
+    if (useTools && toolsOk && toolsCheck?.ok) {
+      request.tools = toolsCheck.value;
+      const choice = buildToolChoice(choiceMode, choiceFn, toolsCheck.value);
+      if (choice.ok) request.tool_choice = choice.value;
+    }
+    if (fmt !== "text" && schemaOk && fmtCheck?.ok) request.response_format = fmtCheck.value;
+    return request;
+  }
+  const requestBody = buildChatCompletionBody(requestFor(exampleMessages), stream && streamOk);
+  const endpoint = chatCompletionUrl(gatewayUrl);
+  const curlExample = [
+    `curl --fail-with-body --request POST ${shellQuote(endpoint)} \\`,
+    `  --header 'Content-Type: application/json' \\`,
+    `  --header "Ocp-Apim-Subscription-Key: \${AIFLUX_SUBSCRIPTION_KEY}" \\`,
+    `  --data-raw ${shellQuote(JSON.stringify(requestBody))}`,
+  ].join("\n");
+  const pythonExample = [
+    "import json",
+    "import os",
+    "from openai import OpenAI",
+    "",
+    "client = OpenAI(",
+    `    base_url=${JSON.stringify(gatewayUrl.replace(/\/+$/, ""))},`,
+    '    api_key="unused",',
+    '    default_headers={"Ocp-Apim-Subscription-Key": os.environ["AIFLUX_SUBSCRIPTION_KEY"]},',
+    "    max_retries=0,",
+    ")",
+    "",
+    `request = json.loads(${JSON.stringify(JSON.stringify(requestBody))})`,
+    "response = client.chat.completions.create(**request)",
+    ...(stream && streamOk ? ["for chunk in response:", "    if chunk.choices:", '        print(chunk.choices[0].delta.content or "", end="")'] : ["print(response.choices[0].message.content)"]),
+  ].join("\n");
+
+  useEffect(() => {
+    if (!examplesOpen) return;
+    dialog.current?.focus();
+    return () => { codeButton.current?.focus(); };
+  }, [examplesOpen]);
+
+  function closeExamples() {
+    setExamplesOpen(false);
+    setCopyStatus("");
+  }
+
+  async function copyExample(text: string) {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+      await navigator.clipboard.writeText(text);
+      setCopyStatus("Example copied to clipboard.");
+    } catch {
+      setCopyStatus("Could not copy the example. Check browser clipboard permissions and try again.");
+    }
+  }
 
   async function doReveal() {
     setRevealMsg(undefined);
@@ -130,19 +174,12 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
     const text = input.trim();
     if (!text) return setFormError("Enter a message.");
     if (!key) return setFormError("A subscription key is required. Reveal one or paste it below.");
-    const request: Record<string, unknown> = { model: modelId };
-    if (model.max_completion_tokens != null) request.max_completion_tokens = model.max_completion_tokens;
     if (useTools && toolsOk) {
       if (!toolsCheck?.ok) return setFormError(toolsCheck?.error ?? "Tools are invalid.");
-      request.tools = toolsCheck.value;
-      const tc = buildToolChoice(choiceMode, choiceFn, toolsCheck.value);
-      if (!tc.ok) return setFormError(tc.error);
-      request.tool_choice = tc.value;
+      const choice = buildToolChoice(choiceMode, choiceFn, toolsCheck.value);
+      if (!choice.ok) return setFormError(choice.error);
     }
-    if (fmt !== "text" && schemaOk) {
-      if (!fmtCheck?.ok) return setFormError(fmtCheck?.error ?? "Response format is invalid.");
-      request.response_format = fmtCheck.value;
-    }
+    if (fmt !== "text" && schemaOk && !fmtCheck?.ok) return setFormError(fmtCheck?.error ?? "Response format is invalid.");
     const history: ChatMessage[] = turns.filter((t) => t.role === "user" || (t.result && t.result.outcome === "completed" && t.result.toolCalls.length === 0))
       .map((t) => ({ role: t.role, content: t.content }) as ChatMessage);
     const messages: ChatMessage[] = [...(system.trim() ? [{ role: "system", content: system.trim() } as ChatMessage] : []), ...history, { role: "user", content: text }];
@@ -156,7 +193,7 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
       key,
       stream: stream && streamOk,
       signal: ctrl.signal,
-      request: { ...(request as { model: string }), messages },
+      request: requestFor(messages),
       onUpdate: setLive,
     });
     abort.current = null;
@@ -175,6 +212,11 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
     <div className="playground">
       <section className="panel config" aria-label="Request settings">
         <Field label="Model">{(id) => <select id={id} value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={busy}>{models.map((m) => <option key={m.id}>{m.id}</option>)}</select>}</Field>
+        <div className="endpoint-details">
+          <p><strong>Gateway base URI</strong><code>{gatewayUrl}</code></p>
+          <p><strong>REST endpoint</strong><code>{endpoint}</code></p>
+          <button ref={codeButton} type="button" className="btn" onClick={() => setExamplesOpen(true)}>Code</button>
+        </div>
         <Field label="Subscription">{(id) => <select id={id} value={subId} onChange={(e) => setSubId(e.target.value)} disabled={busy}>{subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>}</Field>
         {revealed ? (
           <p className="notice" role="status">Using the revealed key (memory only).</p>
@@ -187,48 +229,28 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
         {revealMsg && <p role="status" className="muted">{revealMsg}</p>}
         <Field label="System prompt (optional)">{(id) => <textarea id={id} rows={2} value={system} onChange={(e) => setSystem(e.target.value)} disabled={busy} />}</Field>
         <label className="check"><input type="checkbox" checked={stream && streamOk} onChange={(e) => setStream(e.target.checked)} disabled={busy || !streamOk} /> Stream response (SSE)</label>
-        {!streamOk && <p className="muted">This deployment supports non-streaming text only.</p>}
+        {!streamOk && !toolsOk && !schemaOk && <p className="muted">Guarded text-only requests; streaming, tools, and structured output are not sent.</p>}
         {model.max_completion_tokens != null && <p className="muted">Development output limit: {model.max_completion_tokens} tokens.</p>}
-
         <fieldset disabled={busy}>
           <legend>Tools</legend>
-          {!toolsOk ? <p className="muted">This model does not advertise tool support.</p> : (
-            <>
-              <label className="check"><input type="checkbox" checked={useTools} onChange={(e) => setUseTools(e.target.checked)} /> Send tool definitions</label>
-              {useTools && (
-                <>
-                  <Field label="Tools JSON" error={toolsCheck && !toolsCheck.ok ? toolsCheck.error : undefined} hint="Proposed calls are displayed only. They are never executed.">{(id, d) => <textarea id={id} aria-describedby={d} rows={8} spellCheck={false} value={toolsText} onChange={(e) => setToolsText(e.target.value)} />}</Field>
-                  <Field label="Tool choice">{(id) => (
-                    <select id={id} value={choiceMode} onChange={(e) => setChoiceMode(e.target.value as ToolChoiceMode)}>
-                      <option value="auto">auto</option><option value="none">none</option><option value="required">required</option><option value="function">specific function</option>
-                    </select>
-                  )}</Field>
-                  {choiceMode === "function" && (
-                    <Field label="Function">{(id) => <select id={id} value={choiceFn} onChange={(e) => setChoiceFn(e.target.value)}><option value="">Select…</option>{toolNames.map((n) => <option key={n}>{n}</option>)}</select>}</Field>
-                  )}
-                </>
-              )}
-            </>
-          )}
+          {!toolsOk ? <p className="muted">This model does not advertise tool support.</p> : <>
+            <label className="check"><input type="checkbox" checked={useTools} onChange={(e) => setUseTools(e.target.checked)} /> Send tool definitions</label>
+            {useTools && <>
+              <Field label="Tools JSON" error={toolsCheck && !toolsCheck.ok ? toolsCheck.error : undefined} hint="Proposed calls are displayed only. They are never executed.">{(id, d) => <textarea id={id} aria-describedby={d} rows={8} spellCheck={false} value={toolsText} onChange={(e) => setToolsText(e.target.value)} />}</Field>
+              <Field label="Tool choice">{(id) => <select id={id} value={choiceMode} onChange={(e) => setChoiceMode(e.target.value as ToolChoiceMode)}><option value="auto">auto</option><option value="none">none</option><option value="required">required</option><option value="function">specific function</option></select>}</Field>
+              {choiceMode === "function" && <Field label="Function">{(id) => <select id={id} value={choiceFn} onChange={(e) => setChoiceFn(e.target.value)}><option value="">Select...</option>{toolNames.map((n) => <option key={n}>{n}</option>)}</select>}</Field>}
+            </>}
+          </>}
         </fieldset>
-
         <fieldset disabled={busy}>
           <legend>Response format</legend>
-          {!schemaOk ? <p className="muted">This model does not advertise structured output support.</p> : (
-            <>
-              <Field label="Format">{(id) => (
-                <select id={id} value={fmt} onChange={(e) => setFmt(e.target.value as typeof fmt)}>
-                  <option value="text">Text (default)</option><option value="json_object">JSON object</option><option value="json_schema">JSON schema</option>
-                </select>
-              )}</Field>
-              {fmt === "json_schema" && (
-                <>
-                  <Field label="Schema name">{(id) => <input id={id} value={schemaName} onChange={(e) => setSchemaName(e.target.value)} />}</Field>
-                  <Field label="JSON schema" error={fmtCheck && !fmtCheck.ok ? fmtCheck.error : undefined}>{(id, d) => <textarea id={id} aria-describedby={d} rows={7} spellCheck={false} value={schemaText} onChange={(e) => setSchemaText(e.target.value)} />}</Field>
-                </>
-              )}
-            </>
-          )}
+          {!schemaOk ? <p className="muted">This model does not advertise structured output support.</p> : <>
+            <Field label="Format">{(id) => <select id={id} value={fmt} onChange={(e) => setFmt(e.target.value as typeof fmt)}><option value="text">Text (default)</option><option value="json_object">JSON object</option><option value="json_schema">JSON schema</option></select>}</Field>
+            {fmt === "json_schema" && <>
+              <Field label="Schema name">{(id) => <input id={id} value={schemaName} onChange={(e) => setSchemaName(e.target.value)} />}</Field>
+              <Field label="JSON schema" error={fmtCheck && !fmtCheck.ok ? fmtCheck.error : undefined}>{(id, d) => <textarea id={id} aria-describedby={d} rows={7} spellCheck={false} value={schemaText} onChange={(e) => setSchemaText(e.target.value)} />}</Field>
+            </>}
+          </>}
         </fieldset>
       </section>
 
@@ -248,8 +270,51 @@ function Chat({ models, subs, gatewayUrl, keys, setKey, reveal }: ChatProps) {
           </div>
         </form>
       </section>
+      {examplesOpen && (
+        <div className="dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) closeExamples(); }}>
+          <div
+            ref={dialog}
+            className="code-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="code-dialog-title"
+            tabIndex={-1}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { e.preventDefault(); closeExamples(); }
+              if (e.key === "Tab") {
+                const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])"));
+                const first = items[0];
+                const last = items.at(-1);
+                if (e.shiftKey && (document.activeElement === first || document.activeElement === e.currentTarget)) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+              }
+            }}
+          >
+            <div className="code-dialog-head">
+              <div><h2 id="code-dialog-title">Gateway request examples</h2><p className="muted">REST chat completions for <code>{modelId}</code></p></div>
+              <button type="button" className="btn" onClick={closeExamples} aria-label="Close code examples">Close</button>
+            </div>
+            <p className="endpoint-uri"><strong>Gateway base URI:</strong> <code>{gatewayUrl}</code><br /><strong>REST endpoint URI:</strong> <code>{endpoint}</code></p>
+            <p className="muted">Set <code>AIFLUX_SUBSCRIPTION_KEY</code> in your environment. The example never includes the key currently held by this page.</p>
+            <section aria-labelledby="curl-example-title">
+              <div className="code-title"><h3 id="curl-example-title">cURL REST</h3><button type="button" className="btn" onClick={() => void copyExample(curlExample)}>Copy cURL</button></div>
+              <pre className="code-example" tabIndex={0}><code>{curlExample}</code></pre>
+            </section>
+            <section aria-labelledby="python-example-title">
+              <div className="code-title"><h3 id="python-example-title">OpenAI Python SDK</h3><button type="button" className="btn" onClick={() => void copyExample(pythonExample)}>Copy Python</button></div>
+              <pre className="code-example" tabIndex={0}><code>{pythonExample}</code></pre>
+            </section>
+            <p className="muted">Examples use the selected model, current system prompt and message, its advertised output limit, and only supported request settings.</p>
+            {copyStatus && <p className="notice" role="status" aria-live="polite">{copyStatus}</p>}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function TurnView({ turn }: { turn: Turn }) {

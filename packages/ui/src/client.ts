@@ -1,6 +1,6 @@
 import type {
   CatalogModel, KeyName, Me, Member, Organization, Paged, Price, PriceInput, SafetyEvent,
-  Subscription, SubscriptionState, UsagePage, UsageQuery,
+  Subscription, SubscriptionState, UsagePage, UsageQuery, UsageSeries, UsageSeriesQuery,
 } from "./types";
 
 export class ApiError extends Error {
@@ -85,6 +85,10 @@ export class ControlApi {
   usage = (q: UsageQuery) => this.json<UsagePage>(`/usage${qs({ days: q.days, subscription_id: q.subscription_id, offset: q.offset, limit: q.limit })}`);
   adminUsage = (q: UsageQuery) =>
     this.json<UsagePage>(`/admin/usage${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, offset: q.offset, limit: q.limit })}`);
+  usageSeries = (q: UsageSeriesQuery) =>
+    this.json<UsageSeries>(`/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, start: q.start, end: q.end })}`);
+  adminUsageSeries = (q: UsageSeriesQuery) =>
+    this.json<UsageSeries>(`/admin/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, start: q.start, end: q.end })}`);
 
   /** Authenticated CSV export; the token travels only in the Authorization header. */
   async exportCsv(admin: boolean, days: number, organizationId?: string): Promise<Blob> {

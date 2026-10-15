@@ -13,6 +13,24 @@ export interface ChatRequest {
   max_completion_tokens?: number;
 }
 
+export function chatCompletionUrl(gatewayUrl: string): string {
+  return `${gatewayUrl.replace(/\/+$/, "")}/chat/completions`;
+}
+
+export function buildChatCompletionBody(request: ChatRequest, stream: boolean): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...request, stream };
+  if (stream) body.stream_options = { include_usage: true };
+  return body;
+}
+
+export function textChatRequest(model: string, messages: ChatMessage[], maxCompletionTokens?: number | null): ChatRequest {
+  return {
+    model,
+    messages,
+    ...(maxCompletionTokens == null ? {} : { max_completion_tokens: maxCompletionTokens }),
+  };
+}
+
 export interface ProposedToolCall {
   index: number;
   id: string;
@@ -160,14 +178,13 @@ function errorFromBody(text: string, status: number): string {
 /** Direct gateway call. No retries: a failed or interrupted call is reported, never replayed. */
 export async function chatCompletion(opts: StreamOptions): Promise<ChatResult> {
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
-  const body: Record<string, unknown> = { ...opts.request, stream: opts.stream };
-  if (opts.stream) body.stream_options = { include_usage: true };
+  const body = buildChatCompletionBody(opts.request, opts.stream);
   const acc = new ChatAccumulator();
   const emit = () => opts.onUpdate?.({ ...acc.result, toolCalls: [...acc.result.toolCalls] });
 
   let res: Response;
   try {
-    res = await fetchImpl(`${opts.gatewayUrl}/chat/completions`, {
+    res = await fetchImpl(chatCompletionUrl(opts.gatewayUrl), {
       method: "POST",
       headers: {
         "Ocp-Apim-Subscription-Key": opts.key,

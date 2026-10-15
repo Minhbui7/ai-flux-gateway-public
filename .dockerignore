@@ -20,6 +20,7 @@ node_modules
 **/.terraform
 **/*.tfstate*
 **/.tools
+.tools
 **/__pycache__
 test-results
 playwright-report

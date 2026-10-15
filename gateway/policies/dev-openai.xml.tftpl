@@ -77,7 +77,12 @@
             if (body.Properties().Any(p => !(p.Name == "model" || p.Name == "messages" || p.Name == "max_completion_tokens" || (${unified} &amp;&amp; p.Name == "stream")))) { return true; }
             if (body["stream"] != null &amp;&amp; (body["stream"].Type != JTokenType.Boolean || (bool)body["stream"])) { return true; }
             if (messages == null || messages.Count == 0 || messages.Count > 25) { return true; }
-            if (body["max_completion_tokens"] == null || body["max_completion_tokens"].Type != JTokenType.Integer || !((int)body["max_completion_tokens"] >= 1) || (int)body["max_completion_tokens"] > ${completion_token_limit}) { return true; }
+            var model = body["model"];
+            var modelMaximum = 0;
+            if (model != null &amp;&amp; model.Type == JTokenType.String) {
+              ${model_limit_rules}
+            }
+            if (body["max_completion_tokens"] == null || body["max_completion_tokens"].Type != JTokenType.Integer || !((int)body["max_completion_tokens"] >= 1) || (int)body["max_completion_tokens"] > ${completion_token_limit} || (int)body["max_completion_tokens"] > modelMaximum) { return true; }
             var totalCharacters = 0;
             foreach (var message in messages) {
               if (!(message is JObject)) { return true; }
@@ -92,9 +97,8 @@
               totalCharacters += text.Length;
             }
             if (totalCharacters > 8000) { return true; }
-            var model = body["model"];
-            if (model != null &amp;&amp; model.Type == JTokenType.String &amp;&amp; (string)model == "claude-haiku-5-5" &amp;&amp; !messages.Any(m => (string)m["role"] == "user" || (string)m["role"] == "assistant")) { return true; }
-            return model == null || model.Type != JTokenType.String || !((string)model == "gpt-5.6-luna" || (string)model == "gpt-5.6-sol" || (${unified} &amp;&amp; (string)model == "claude-haiku-5-5"));
+            if (model != null &amp;&amp; model.Type == JTokenType.String &amp;&amp; (${anthropic_alias_conditions}) &amp;&amp; !messages.Any(m => (string)m["role"] == "user" || (string)m["role"] == "assistant")) { return true; }
+            return model == null || model.Type != JTokenType.String || !(${model_alias_conditions});
           }'>
             <return-response>
               <set-status code="400" reason="Unsupported request shape" />
@@ -209,15 +213,23 @@
           </categories>
         </llm-content-safety>
         <choose>
-          <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-luna")'>
-            <set-backend-service backend-id="dev-gpt-5-6-luna-pool" />
+%{ for alias in openai_aliases ~}
+          <when condition='@((string)context.Variables["aiflux-model"] == "${alias}")'>
+            <set-backend-service backend-id="${openai_pool_ids[alias]}" />
+%{ if contains(foundry_aliases, alias) ~}
+            <rewrite-uri template="/chat/completions?api-version=${foundry_api_versions[alias]}" copy-unmatched-params="false" />
+            <set-body><![CDATA[@{
+              var request = context.Request.Body.As<JObject>(preserveContent: true);
+              request["max_tokens"] = request["max_completion_tokens"];
+              request.Remove("max_completion_tokens");
+              return request.ToString();
+            }]]></set-body>
+%{ endif ~}
           </when>
-          <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-sol")'>
-            <set-backend-service backend-id="dev-gpt-5-6-sol-pool" />
-          </when>
-%{ if unified ~}
-          <when condition='@((string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
-            <set-backend-service backend-id="dev-claude-haiku-5-5-eastus" />
+%{ endfor ~}
+%{ for alias in anthropic_aliases ~}
+          <when condition='@((string)context.Variables["aiflux-model"] == "${alias}")'>
+            <set-backend-service backend-id="${anthropic_backend_ids[alias]}" />
             <rewrite-uri template="/messages" copy-unmatched-params="false" />
             <set-header name="anthropic-version" exists-action="override"><value>2023-06-01</value></set-header>
             <set-body><![CDATA[@{
@@ -230,7 +242,7 @@
                 else { messages.Add(new JObject { ["role"] = role, ["content"] = (string)item["content"] }); }
               }
               var converted = new JObject {
-                ["model"] = "claude-haiku-5-5",
+                ["model"] = (string)context.Variables["aiflux-model"],
                 ["messages"] = messages,
                 ["max_tokens"] = (int)request["max_completion_tokens"],
                 ["stream"] = false
@@ -239,7 +251,7 @@
               return converted.ToString();
             }]]></set-body>
           </when>
-%{ endif ~}
+%{ endfor ~}
         </choose>
         <set-header name="Authorization" exists-action="delete" />
         <set-header name="api-key" exists-action="delete" />
@@ -271,17 +283,16 @@
         </when>
       </choose>
       <choose>
-        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-luna")'>
-          <set-backend-service backend-id="dev-gpt-5-6-luna-pool" />
+%{ for alias in openai_aliases ~}
+        <when condition='@((string)context.Variables["aiflux-model"] == "${alias}")'>
+          <set-backend-service backend-id="${openai_pool_ids[alias]}" />
         </when>
-        <when condition='@((string)context.Variables["aiflux-model"] == "gpt-5.6-sol")'>
-          <set-backend-service backend-id="dev-gpt-5-6-sol-pool" />
+%{ endfor ~}
+%{ for alias in anthropic_aliases ~}
+        <when condition='@((string)context.Variables["aiflux-model"] == "${alias}")'>
+          <set-backend-service backend-id="${anthropic_backend_ids[alias]}" />
         </when>
-%{ if unified ~}
-        <when condition='@((string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
-          <set-backend-service backend-id="dev-claude-haiku-5-5-eastus" />
-        </when>
-%{ endif ~}
+%{ endfor ~}
       </choose>
       <forward-request timeout="${unified ? 240 : 45}" buffer-request-body="true" buffer-response="true" fail-on-error-status-code="false" />
     </retry>
@@ -295,7 +306,7 @@
         <set-variable name="aiflux-finops-usage" value='@{
           var response = context.Response.Body.As&lt;JObject&gt;(preserveContent: true);
           var usage = response["usage"] as JObject;
-          var anthropic = (string)context.Variables["aiflux-model"] == "claude-haiku-5-5";
+          var anthropic = ${anthropic_context_conditions};
           var details = usage != null ? usage["prompt_tokens_details"] as JObject : null;
           var counters = new JObject {
             ["input_tokens"] = usage != null ? usage[anthropic ? "input_tokens" : "prompt_tokens"] : null,
@@ -327,18 +338,19 @@
       </when>
     </choose>
     <choose>
-      <when condition='@(context.Response.StatusCode == 200 &amp;&amp; context.Request.Method == "POST" &amp;&amp; (string)context.Variables["aiflux-model"] == "claude-haiku-5-5")'>
+      <when condition='@(context.Response.StatusCode == 200 &amp;&amp; context.Request.Method == "POST" &amp;&amp; (${anthropic_context_conditions}))'>
         <set-body id="aiflux-anthropic-normalization"><![CDATA[@{
           var response = context.Response.Body.As<JObject>(preserveContent: true);
           var content = response["content"] as JArray;
           var usage = response["usage"] as JObject;
+          var requestedOutput = (int)JObject.Parse((string)context.Variables["aiflux-request-json"])["max_completion_tokens"];
           if (content == null || content.Count == 0 || usage == null ||
               response["id"] == null || response["id"].Type != JTokenType.String ||
               string.IsNullOrWhiteSpace((string)response["id"]) ||
               usage["input_tokens"] == null || usage["input_tokens"].Type != JTokenType.Integer ||
               usage["output_tokens"] == null || usage["output_tokens"].Type != JTokenType.Integer ||
               (int)usage["input_tokens"] < 0 || (int)usage["output_tokens"] < 0 ||
-              (int)usage["output_tokens"] > ${completion_token_limit} ||
+              (int)usage["output_tokens"] > requestedOutput ||
               (int)usage["input_tokens"] > int.MaxValue - (int)usage["output_tokens"]) {
             throw new Exception("Invalid provider response");
           }

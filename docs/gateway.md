@@ -9,9 +9,24 @@ preserved for investigation but globally denied, alongside the production `/v1`.
 No keys are compared manually and native subscription validation stays enabled.
 The original two-model `/dev/v1` API and product keep their existing behavior.
 
-The adapter reuses `dev-openai.xml.tftpl` with an explicit mode. Only the three
-deployed aliases `gpt-5.6-luna`, `gpt-5.6-sol` and `claude-haiku-5-5` are accepted.
-Haiku uses the primary Foundry account's `/anthropic/v1/messages` endpoint:
+The adapter reuses `dev-openai.xml.tftpl` with an explicit mode. The checked-in
+catalog continues to expose the original three aliases (`gpt-5.6-luna`,
+`gpt-5.6-sol`, and `claude-haiku-5-5`); the eight requested new aliases are
+complete but disabled placeholders until their direct and guarded gateway smoke
+evidence passes. They are never added to the original `/dev/v1` two-model API.
+See [model deployment and acceptance](../infra/models/README.md) for exact
+regions, quota budgets, and release commands.
+
+OpenAI v1, Foundry Direct OpenAI-compatible (`MoonshotAI`/`DeepSeek`), and
+Anthropic Messages backends have explicit data-driven routing. Foundry Direct
+uses the endpoint advertised by the live account metadata, adds the documented
+`/models` base to its service root, appends
+`/chat/completions?api-version=2024-05-01-preview`,
+and translates the guarded `max_completion_tokens` field to provider
+`max_tokens`. Anthropic uses the primary Foundry account's `/anthropic/v1/messages`
+endpoint for the existing Haiku route; new Sonnet/Opus routes preserve the exact
+selected hyphenated model alias on the translated request.
+Haiku request translation:
 redacted system/developer messages become `system`, user/assistant messages
 retain their roles, and `max_completion_tokens` becomes `max_tokens`.
 Valid text blocks are joined in provider order and converted to OpenAI
@@ -33,8 +48,12 @@ Managed-identity auth uses the gateway UAMI client ID and Cognitive Services
 audience. Original-input safety/Prompt Shields, guarded PII batching, redacted
 input safety and completion safety remain mandatory for both providers.
 The user-approved adapter limits are 2 RPM/model/subscription, 20,000 TPM and
-100,000 completion tokens, with a 240-second backend timeout and at most one
-buffered transient-5xx retry. Separate adapter variables preserve the legacy
+per-model completion bounds, with a 240-second backend timeout and at most one
+buffered transient-5xx retry. New aliases start at a 4,096-token output bound,
+verified by bounded direct and guarded requests before publication; this is not
+a claim about their advertised native maximum. The existing per-model TPM
+throttle remains in place. Existing accepted-model limits are unchanged.
+Separate adapter variables preserve the legacy
 `/dev/v1` limits of 2,048 TPM, 64 output tokens and a 45-second backend timeout.
 The new variables retain conservative defaults; the active approved inputs
 explicitly select the higher limits. Prompt tokens are estimated at admission;
@@ -69,10 +88,12 @@ signed-in customer flow through the adapter: team subscription reconciliation,
 key reveal and both provider playground responses. Regional failover and complete
 adversarial acceptance remain pending.
 Use `gateway\tools\verify_adapter.py` with an explicitly approved adapter-product
-test subscription and both `--portal-origin` values; `--smoke` makes three paid
-synthetic calls. Keys and response text are never written; empty HTTP 200 responses
-cannot pass completion acceptance. Dispose of the unowned synthetic subscription
-after checking; it is not a tenant's billable subscription.
+test subscription and both `--portal-origin` values; `--smoke` tests the currently
+accepted catalog, while `--candidate-alias` additionally smoke-tests an explicitly
+temporary hidden route. Candidate aliases are not returned by `GET /models`.
+Keys and response text are never written; empty HTTP 200 responses cannot pass
+completion acceptance. Dispose of any unowned synthetic subscription after
+checking; it is not a tenant's billable subscription.
 
 Normalization regressions execute the exact policy C# expression against
 synthetic provider responses, rather than a Python translation. Install .NET

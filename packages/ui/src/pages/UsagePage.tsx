@@ -1,17 +1,30 @@
 import { useState } from "react";
 import { ApiError } from "../client";
 import { useSession } from "../session";
-import type { Organization, Paged, UsagePage as UsageData, UsageSummary } from "../types";
-import { AsyncView, Badge, EmptyState, ErrorState, Field, NA, PageHeader, Pager, Table, downloadBlob, fmtDate, fmtInt, fmtMs, useAsync } from "../components/ui";
+import type { Organization, Paged, UsagePage as UsageData, UsageSeries, UsageSummary } from "../types";
+import { UsageCharts } from "../components/UsageCharts";
+import { AsyncView, Badge, EmptyState, ErrorState, Field, NA, PageHeader, Pager, Table, downloadBlob, fmtDate, fmtInt, fmtSecondsFromMs, useAsync } from "../components/ui";
 
 const LIMIT = 50;
 const DAY_OPTIONS = [1, 7, 30, 90];
+const MINUTE_MS = 60_000;
+
+interface Viewport {
+  start: number;
+  end: number;
+}
+
+function initialViewport(days: number): Viewport {
+  const end = Math.floor(Date.now() / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
+  return { start: end - days * 24 * 60 * MINUTE_MS, end };
+}
 
 export function UsagePage({ admin = false }: { admin?: boolean }) {
   const { api } = useSession();
   const [days, setDays] = useState(30);
   const [subscriptionId, setSubscriptionId] = useState("");
   const [orgId, setOrgId] = useState("");
+  const [viewport, setViewport] = useState(() => initialViewport(30));
   const [offset, setOffset] = useState(0);
   const [exportError, setExportError] = useState<string>();
   const [exporting, setExporting] = useState(false);
@@ -25,6 +38,47 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
     },
     [api, admin, days, subscriptionId, orgId, offset],
   );
+  const seriesState = useAsync<UsageSeries>(
+    () => {
+      const q = {
+        days,
+        subscription_id: subscriptionId || undefined,
+        organization_id: orgId || undefined,
+        start: new Date(viewport.start).toISOString(),
+        end: new Date(viewport.end).toISOString(),
+      };
+      return admin ? api.adminUsageSeries(q) : api.usageSeries(q);
+    },
+    [api, admin, days, subscriptionId, orgId, viewport.start, viewport.end],
+  );
+
+  function resetViewport(rangeDays = days) {
+    setViewport(initialViewport(rangeDays));
+  }
+
+  function zoom(factor: number) {
+    const base = initialViewport(days);
+    const width = viewport.end - viewport.start;
+    const nextWidth = Math.max(MINUTE_MS, Math.min(base.end - base.start, Math.round(width * factor / MINUTE_MS) * MINUTE_MS));
+    const center = (viewport.start + viewport.end) / 2;
+    let start = center - nextWidth / 2;
+    let end = center + nextWidth / 2;
+    if (start < base.start) { end += base.start - start; start = base.start; }
+    if (end > base.end) { start -= end - base.end; end = base.end; }
+    const alignedStart = Math.floor(Math.max(base.start, start) / MINUTE_MS) * MINUTE_MS;
+    setViewport({ start: alignedStart, end: Math.min(base.end, alignedStart + nextWidth) });
+  }
+
+  function pan(direction: -1 | 1) {
+    const base = initialViewport(days);
+    const offset = Math.max(MINUTE_MS, Math.round((viewport.end - viewport.start) * 0.25 / MINUTE_MS) * MINUTE_MS) * direction;
+    const span = viewport.end - viewport.start;
+    let start = viewport.start + offset;
+    let end = viewport.end + offset;
+    if (start < base.start) { start = base.start; end = start + span; }
+    if (end > base.end) { end = base.end; start = end - span; }
+    setViewport({ start, end });
+  }
 
   async function exportCsv() {
     setExporting(true);
@@ -48,26 +102,44 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
       {exportError && <ErrorState message={exportError} />}
       <div className="filters">
         <Field label="Period">{(id) => (
-          <select id={id} value={days} onChange={(e) => { setDays(Number(e.target.value)); setOffset(0); }}>
+          <select id={id} value={days} onChange={(e) => { const next = Number(e.target.value); setDays(next); setOffset(0); resetViewport(next); }}>
             {DAY_OPTIONS.map((d) => <option key={d} value={d}>Last {d} day{d > 1 ? "s" : ""}</option>)}
           </select>
         )}</Field>
         {admin ? (
           <Field label="Organization">{(id) => (
-            <select id={id} value={orgId} onChange={(e) => { setOrgId(e.target.value); setOffset(0); }}>
+            <select id={id} value={orgId} onChange={(e) => { setOrgId(e.target.value); setOffset(0); resetViewport(); }}>
               <option value="">All organizations</option>
               {orgs.data?.items.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           )}</Field>
         ) : (
           <Field label="Subscription">{(id) => (
-            <select id={id} value={subscriptionId} onChange={(e) => { setSubscriptionId(e.target.value); setOffset(0); }}>
+            <select id={id} value={subscriptionId} onChange={(e) => { setSubscriptionId(e.target.value); setOffset(0); resetViewport(); }}>
               <option value="">All subscriptions</option>
               {subs.data?.items.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}</Field>
         )}
       </div>
+      <section className="usage-chart-section" aria-labelledby="usage-chart-heading">
+        <div className="usage-chart-head">
+          <div><h2 id="usage-chart-heading">Usage over time</h2><p className="muted">UTC minute aggregates across the selected period; independent of request-table pagination.</p></div>
+          <div className="chart-controls" role="group" aria-label="Shared chart viewport controls">
+            <button className="btn" onClick={() => zoom(0.5)} disabled={viewport.end - viewport.start <= MINUTE_MS}>Zoom in</button>
+            <button className="btn" onClick={() => zoom(2)} disabled={viewport.end - viewport.start >= days * 24 * 60 * MINUTE_MS}>Zoom out</button>
+            <button className="btn" onClick={() => pan(-1)} disabled={viewport.start <= initialViewport(days).start}>Pan earlier</button>
+            <button className="btn" onClick={() => pan(1)} disabled={viewport.end >= initialViewport(days).end}>Pan later</button>
+            <button className="btn" onClick={() => resetViewport()} aria-label="Reset chart zoom and pan">Reset</button>
+          </div>
+        </div>
+        <p className="muted chart-range">Viewport: {new Date(viewport.start).toISOString().replace("T", " ").slice(0, 16)} – {new Date(viewport.end).toISOString().replace("T", " ").slice(0, 16)} UTC</p>
+        {seriesState.loading && seriesState.data
+          ? <p role="status" className="muted">Updating chart data for this UTC viewport…</p>
+          : <AsyncView state={seriesState}>
+            {(series) => <UsageCharts series={series} start={viewport.start} end={viewport.end} />}
+          </AsyncView>}
+      </section>
       <AsyncView state={state}>
         {(d) => <UsageBody data={d} offset={offset} onPage={setOffset} showOrgNote={admin} />}
       </AsyncView>
@@ -110,7 +182,7 @@ function UsageBody({ data, offset, onPage, showOrgNote }: { data: UsageData; off
         <Stat label="Known cost (estimated)" value={cost.value} note={cost.note} tone={cost.tone} />
         <Stat label="Failed requests" value={fmtInt(s.failed_requests)} tone={s.failed_requests > 0 ? "bad" : undefined} />
         <Stat label="Throttled requests" value={fmtInt(s.throttled_requests)} tone={s.throttled_requests > 0 ? "warn" : undefined} />
-        <Stat label="End-to-end p95" value={fmtMs(s.e2e_p95_ms)} note={s.e2e_p95_ms === null ? "Not available" : "Gateway end-to-end latency"} />
+        <Stat label="End-to-end p95" value={fmtSecondsFromMs(s.e2e_p95_ms)} note={s.e2e_p95_ms === null ? "Not available" : "Gateway end-to-end latency"} />
         <Stat label="Time to first token" value={s.ttft_supported ? "Supported" : "Unavailable"} note={s.ttft_supported ? undefined : "Not natively measurable for all callers"} />
         <Stat label="Cache tokens" value={s.cache_tokens_supported ? "Supported" : "Unavailable"} note={s.cache_tokens_supported ? undefined : "Not natively reported for all callers"} />
         <Stat label="Last ingested" value={fmtDate(s.last_ingested_at)} note={s.last_ingested_at ? "Data may lag the latest requests" : "No telemetry ingested yet"} />
@@ -120,7 +192,7 @@ function UsageBody({ data, offset, onPage, showOrgNote }: { data: UsageData; off
       ) : (
         <>
           {showOrgNote && <p className="muted">Showing requests across organizations.</p>}
-          <Table caption="Request usage" head={["Time", "Model", "Region", "Status", "Input", "Output", ...(s.cache_tokens_supported ? ["Cached in", "Cache write"] : []), "Cost", "E2E", ...(s.ttft_supported ? ["TTFT"] : []), "Completeness"]}>
+          <Table caption="Request usage" head={["Time", "Model", "Region", "Status", "Input", "Output", ...(s.cache_tokens_supported ? ["Cached in", "Cache write"] : []), "Cost", "E2E (s)", ...(s.ttft_supported ? ["TTFT (s)"] : []), "Completeness"]}>
             {data.items.map((r) => (
               <tr key={r.id}>
                 <td>{fmtDate(r.occurred_at)}</td>
@@ -132,8 +204,8 @@ function UsageBody({ data, offset, onPage, showOrgNote }: { data: UsageData; off
                 {s.cache_tokens_supported && <td className="num">{fmtInt(r.cached_input_tokens)}</td>}
                 {s.cache_tokens_supported && <td className="num">{fmtInt(r.cache_write_tokens)}</td>}
                 <td className="num">{r.cost === null ? <span title="Usage or price missing; not zero">Unknown</span> : `${r.currency ?? ""} ${r.cost}`.trim()}</td>
-                <td className="num">{fmtMs(r.e2e_ms)}</td>
-                {s.ttft_supported && <td className="num">{r.ttft_ms === null ? NA : fmtMs(r.ttft_ms)}</td>}
+                <td className="num">{fmtSecondsFromMs(r.e2e_ms)}</td>
+                {s.ttft_supported && <td className="num">{r.ttft_ms === null ? NA : fmtSecondsFromMs(r.ttft_ms)}</td>}
                 <td>{r.completeness === "complete" ? <Badge tone="ok">complete</Badge> : <Badge tone="warn">{r.completeness}</Badge>}</td>
               </tr>
             ))}

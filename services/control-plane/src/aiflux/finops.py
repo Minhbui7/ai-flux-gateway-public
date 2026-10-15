@@ -5,8 +5,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import BigInteger, DateTime, Float, case, cast, func, literal_column, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from aiflux.models import IngestionState, ModelPrice, UsageRecord
 from aiflux.schemas import PriceCreate
@@ -224,3 +225,62 @@ def usage_csv(
         }
         writer.writerow(safe_row)
     return output.getvalue()
+
+
+def usage_series_query(
+    dialect: str,
+    organization_id: str | None,
+    subscription_id: str | None,
+    start: datetime,
+    end: datetime,
+) -> Select:
+    timestamp = UsageRecord.occurred_at
+    if dialect == "mssql":
+        epoch = literal_column("CONVERT(datetime2, '20000101', 112)", type_=DateTime())
+        minute = func.dateadd(
+            literal_column("minute"), func.datediff(literal_column("minute"), epoch, timestamp), epoch,
+        )
+    elif dialect == "sqlite":
+        minute = func.strftime("%Y-%m-%dT%H:%M:00Z", timestamp)
+    else:
+        raise ValueError(f"Minute usage aggregation does not support database dialect {dialect!r}")
+    conditions = [timestamp >= start, timestamp < end]
+    if organization_id is not None:
+        conditions.append(UsageRecord.organization_id == organization_id)
+    if subscription_id is not None:
+        conditions.append(UsageRecord.subscription_id == subscription_id)
+    inputs = cast(UsageRecord.input_tokens, BigInteger)
+    outputs = cast(UsageRecord.output_tokens, BigInteger)
+    missing_tokens = UsageRecord.input_tokens.is_(None) | UsageRecord.output_tokens.is_(None)
+    return (
+        select(
+            minute.label("minute"),
+            func.count(UsageRecord.id).label("requests"),
+            func.sum(inputs).label("input_tokens"),
+            func.sum(outputs).label("output_tokens"),
+            func.sum(inputs + outputs).label("total_tokens"),
+            (func.avg(cast(UsageRecord.e2e_ms, Float)) / 1000.0).label("avg_e2e_seconds"),
+            func.sum(cast(case((missing_tokens, 1), else_=0), BigInteger)).label("missing_token_requests"),
+            func.count(UsageRecord.e2e_ms).label("latency_samples"),
+        )
+        .where(*conditions)
+        .group_by(minute)
+        .order_by(minute)
+    )
+
+
+def usage_series_response(
+    db: Session,
+    organization_id: str | None,
+    subscription_id: str | None,
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    query = usage_series_query(db.get_bind().dialect.name, organization_id, subscription_id, start, end)
+    items = []
+    for row in db.execute(query).mappings():
+        item = dict(row)
+        minute = item["minute"]
+        item["minute"] = aware(datetime.fromisoformat(minute) if isinstance(minute, str) else minute)
+        items.append(item)
+    return {"items": items, "start": start, "end": end, "interval_seconds": 60}

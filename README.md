@@ -34,7 +34,8 @@ by the gateway or playground, and no prompts/completions are retained.
 The diagrams below illustrate the system topology and traffic flows reflecting all current development and infrastructure changes:
 - **Application Gateway v2 HTTPS & Key Vault integration:** Key Vault network ACLs permit `bypass = "AzureServices"` so Application Gateway v2 can retrieve and reload its SSL certificate via its User-Assigned Managed Identity (`edge-identity`).
 - **Unified CORS coverage:** Application Gateway FQDN (`https://aiflux-gateway-dev.eastus.cloudapp.azure.com`) is configured as an allowed CORS origin across both the Control Plane API and the APIM guarded adapter.
-- **Guarded `/dev/llm/v1` adapter:** Active APIM adapter supporting `gpt-5.6-luna`, `gpt-5.6-sol`, and `claude-haiku-5-5` (with internal thinking block normalization, 20,000 TPM limit, and 10 team subscriptions).
+- **Guarded `/dev/llm/v1` adapter:** Eleven accepted models: the original `gpt-5.6-luna`, `gpt-5.6-sol`, and `claude-haiku-5-5`, plus `gpt-6-astra`, `gpt-6-luna`, `gpt-6-sol`, `Kimi-K2.6`, `DeepSeek-V4-Flash-0731`, `DeepSeek-V4-Pro`, `claude-sonnet-5-5`, and `claude-opus-5-5`. Guarded non-streaming text chat retains thinking-block normalization, the 20,000 TPM per-subscription/model limit, and 10 team subscriptions. New models have a 4,096-token request output ceiling; original limits are unchanged.
+- **Playground and showback:** Configured base/REST endpoint details and secret-free cURL/OpenAI Python examples; synchronized, zoomable minute charts for requests, reported tokens, and average latency. Usage-page latency is displayed in seconds; existing millisecond API/CSV fields remain unchanged.
 - **Hybrid private data path:** Azure SQL (Australia East S0), Azure Key Vault, and Function Storage run with public access disabled via Private Endpoints in VNet `10.240.3.0/24`. Outbound access from App Service uses regional VNet integration (`10.240.2.0/24`).
 
 An editable Draw.io version is also maintained at [`docs/architecture.drawio`](docs/architecture.drawio).
@@ -100,7 +101,7 @@ flowchart TB
             direction TB
             P_CORS["1. CORS Policy: Allow AppGw FQDN + Portals"]
             P_Auth["2. Auth: <code>Ocp-Apim-Subscription-Key</code>"]
-            P_Rate["3. Throttling: 2 RPM / 20k TPM / 100k Tokens"]
+            P_Rate["3. Throttling: 2 RPM / 20k TPM<br/>Output: originals 100k / new models 4096"]
             P_PII["4. Synchronous PII Redaction (5-doc Batches)"]
             P_Shield["5. Prompt Shields & Input Moderation"]
             P_Trans["6. Provider Normalization & Translation"]
@@ -112,8 +113,8 @@ flowchart TB
 
     subgraph AIBackends["AI Services & Model Backends"]
         direction TB
-        OAI["Azure OpenAI Service (East US)<br/>GlobalStandard Pool (120k TPM quota)<br/>• <code>gpt-5.6-luna</code><br/>• <code>gpt-5.6-sol</code>"]
-        Foundry["Azure AI Foundry (East US)<br/>• <code>claude-haiku-5-5</code><br/>(Anthropic Messages API)"]
+        OAI["Azure OpenAI (East US + Sweden Central)<br/>Original GPT-5.6: 120k TPM per deployment<br/>GPT-6 Astra/Luna/Sol: 100k TPM per deployment"]
+        Foundry["Foundry Direct (existing regional accounts)<br/>DeepSeek Flash/Pro: 100k TPM per deployment<br/>Kimi: East US 100k TPM<br/>Anthropic Messages: Haiku/Sonnet/Opus<br/>Sonnet/Opus: East US 50k/40k TPM"]
         Safety["Azure AI Content Safety<br/><code>aiflux-dev-safety</code><br/>(Prompt Shields & Text Moderation)"]
         Language["Azure AI Language Services<br/><code>aiflux-dev-foundry</code><br/>(Synchronous PII Detection)"]
     end
@@ -183,7 +184,7 @@ sequenceDiagram
 
     rect rgb(236, 253, 245)
         Note over GW,Model: Execution & Translation Phase
-        alt Model is gpt-5.6-luna or gpt-5.6-sol
+        alt Model uses an OpenAI-compatible wire API
             GW->>Model: Forward native OpenAI request (using Gateway UAMI)
             Model-->>GW: OpenAI response + usage
         else Model is claude-haiku-5-5
@@ -229,17 +230,18 @@ ingestion remains disabled. Haiku 5.5 is deployed in both model regions but is n
 routed by this original development API. Basic customer acceptance is recorded
 below; full admin/multi-tenant journeys, failover/quota/safety and live FinOps remain pending.
 
-**Latest development path (2026-10-12):** the user-approved, Terraform-managed
+**Latest development path (2026-10-14):** the user-approved, Terraform-managed
 text adapter at `https://aiflux-fdpo-dev-apim.azure-api.net/dev/llm/v1` returns
-real OpenAI-shaped completions for `gpt-5.6-luna`, `gpt-5.6-sol` and
-`claude-haiku-5-5`. This is explicit APIM policy translation, **not** the native
+real OpenAI-shaped completions for all eleven accepted catalog models listed
+above. This is explicit APIM policy translation, **not** the native
 unified-model preview. Its separate `aiflux-dev-unified` product is used by the
 control plane for new team keys. The original `/dev/v1` remains available for
 its original approved subscriptions; `/v1` and the experimental `/llm/v1` remain
 denied. Both providers retain original/redacted input safety, Prompt Shields,
 five-document PII batches, output safety, UAMI authentication and bounded retry.
 Streaming/tools/structured output are rejected. The user-approved adapter bounds
-are 2 RPM/model/subscription, 20,000 TPM and 100,000 completion tokens per request,
+are 2 RPM/model/subscription and 20,000 TPM, with 100,000 completion tokens per
+request for original models and 4,096 for the eight new aliases,
 with a 240-second backend timeout. Legacy `/dev/v1` retains 2,048 TPM and 64 output
 tokens. A live Sol request completed a 6,364-word essay with 8,571 completion tokens.
 The Haiku response-conversion failure is repaired: validated internal thinking
@@ -252,8 +254,10 @@ Direct customer/admin App Service endpoints are intentionally public as the
 approved stopgap; Entra and SQL membership authorization remain mandatory.
 The portals use the direct API and APIM origins, with exact CORS/CSP settings,
 native subscription-key headers and capability-aware non-streaming requests.
-The development catalog contains three callable models and six clearly labeled
-preview-only tiles. Production catalog and ingestion remain disabled.
+The development catalog contains eleven callable models, all checked before
+publication. The API and enabled ingestion Function bundle the same accepted
+catalog. Production inference remains disabled. New aliases do not inherit
+prices from other models; unpriced usage remains Unknown.
 The user confirmed the signed-in customer journey: team subscription
 reconciliation succeeds, its key reveals, and both OpenAI and Anthropic respond
 in the playground. The deployment-only blockers were SQL Server-invalid Boolean
