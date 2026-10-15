@@ -1,5 +1,12 @@
 # Guarded development model deployments
 
+Customer pilots use [the guided launcher](../../docs/deployment.md), isolated local
+state and an explicit `model_aliases` subset. The default `null` retains this
+development root's existing full selection. Do not apply a subset against an
+existing full-catalog state: removed deployments are not a migration strategy.
+`verify.py --model-alias <alias> --output <customer-evidence.json>` isolates
+customer evidence; omitted flags preserve the development behavior.
+
 `model-spec.json` is the reviewed source for ARM formats/versions, target regions,
 GlobalStandard capacities, direct wire API/auth contracts, safe per-model adapter
 output ceilings, and shared per-model quota budgets. `main.tf`, `verify.py`, the

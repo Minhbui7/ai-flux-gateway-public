@@ -1,23 +1,22 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from aiflux.config import get_settings
+from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for
 from aiflux.models import Member, Organization
 
 
-def main() -> None:
-    settings = get_settings()
+def configure_bootstrap(settings: Settings, engine: Engine) -> None:
     if settings.identity_errors() or not settings.bootstrap_object_id:
         raise SystemExit("Set database, audience, home tenant and bootstrap object ID before bootstrap")
     tenant = str(UUID(settings.home_tenant_id))
     object_id = str(UUID(settings.bootstrap_object_id))
-    with Session(engine_for(settings.database_url)) as db:
+    with Session(engine) as db:
         org = db.scalar(select(Organization).where(Organization.tenant_id == tenant))
         if org is None:
-            org = Organization(name="Singtel IDS", tenant_id=tenant, enabled=True)
+            org = Organization(name=settings.home_organization_name, tenant_id=tenant, enabled=True)
             db.add(org)
             db.flush()
         if not org.enabled:
@@ -31,6 +30,13 @@ def main() -> None:
             raise SystemExit("Membership exists with different permissions; bootstrap will not override it")
         db.commit()
     print("IDS bootstrap membership is configured")
+
+
+def main() -> None:
+    settings = get_settings()
+    if settings.identity_errors() or not settings.bootstrap_object_id:
+        raise SystemExit("Set database, audience, home tenant and bootstrap object ID before bootstrap")
+    configure_bootstrap(settings, engine_for(settings.database_url))
 
 
 if __name__ == "__main__":

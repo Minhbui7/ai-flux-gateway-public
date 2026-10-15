@@ -16,8 +16,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.5"
+          terraform_wrapper: false
+      - name: Initialize providers for rendered customer-profile mock plans
+        run: terraform -chdir=infra/terraform init -backend=false -input=false
       - run: python -m pip install -e ".[dev]"
-      - run: ruff check services/control-plane/src tests/unit
+      - run: ruff check services/control-plane/src tests/unit scripts/deployment infra/scripts/bootstrap-entra.py infra/models/verify.py gateway/tools/verify_adapter.py
       - run: mypy
       - run: pytest -q tests/unit tests/contract
       - name: Validate migrations
@@ -46,9 +52,10 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.16.5"
-      - run: terraform -chdir=infra/models fmt -check
+      - run: terraform -chdir=infra/models fmt -check -recursive
       - run: terraform -chdir=infra/models init -backend=false -input=false
       - run: terraform -chdir=infra/models validate
+      - run: terraform -chdir=infra/models test
       - run: terraform -chdir=infra/operator fmt -check -recursive
       - run: terraform -chdir=infra/operator init -backend=false -input=false
       - run: terraform -chdir=infra/operator validate

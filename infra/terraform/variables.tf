@@ -65,6 +65,17 @@ variable "publisher_email" {
   type = string
 }
 
+variable "publisher_name" {
+  type    = string
+  default = "Singtel IDS"
+}
+
+variable "model_backends_file" {
+  description = "Optional customer-specific direct acceptance evidence; defaults to the existing development file."
+  type        = string
+  default     = null
+}
+
 variable "protection_language_enabled" {
   description = "Provision mandatory Language/PII dependency. Set false only to defer an Azure entitlement failure; inference and public-edge release remain blocked."
   type        = bool

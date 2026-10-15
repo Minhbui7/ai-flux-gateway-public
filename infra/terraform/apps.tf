@@ -9,6 +9,7 @@ locals {
     AIFLUX_ENTRA_CLIENT_ID          = var.entra.client_id
     AIFLUX_HOME_TENANT_ID           = var.entra.home_tenant_id
     AIFLUX_BOOTSTRAP_OBJECT_ID      = var.entra.bootstrap_object_id
+    AIFLUX_HOME_ORGANIZATION_NAME   = var.publisher_name
     AIFLUX_GATEWAY_URL              = local.gateway_url
     AIFLUX_APIM_RESOURCE_ID         = azurerm_api_management.main.id
     AIFLUX_GATEWAY_SETTINGS_SCOPES  = jsonencode(sort(tolist(local.gateway_settings_scopes)))

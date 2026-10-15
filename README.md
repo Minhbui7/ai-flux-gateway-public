@@ -21,7 +21,8 @@ The [capability matrix](docs/capabilities.md) is the canonical status reference.
 | Portal developers | [Portals](docs/portals.md) |
 | API, SQL and showback operators | [Control plane](docs/control-plane.md) |
 | Gateway policy and validation operators | [Gateway](docs/gateway.md) |
-| Deployment operators | [Infrastructure](docs/infrastructure.md), [model deployment](infra/models/README.md) |
+| Customer pilot deployment | [Guided deployment and manual prerequisites](docs/deployment.md) |
+| Development infrastructure operators | [Infrastructure](docs/infrastructure.md), [model deployment](infra/models/README.md) |
 | Deferred alternative operator design | [Private operator](docs/operator-runner.md) |
 
 IDS administrators can configure guarded-API safety thresholds, RPM/TPM and

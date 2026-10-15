@@ -23,6 +23,7 @@ test-results/
 !*.tfvars.example
 !.terraform.lock.hcl
 .tools/
+.deployment/
 services/usage-ingestion/wheels/
 services/usage-ingestion/gateway/
 build/

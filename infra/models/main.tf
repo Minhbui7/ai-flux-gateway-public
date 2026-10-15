@@ -33,6 +33,16 @@ variable "gateway_principal_id" {
   type = string
 }
 
+variable "model_aliases" {
+  description = "Null preserves the existing development selection. Customer pilots may select a reviewed subset."
+  type        = set(string)
+  default     = null
+  validation {
+    condition     = var.model_aliases == null ? true : length(setsubtract(var.model_aliases, toset([for model in jsondecode(file("${path.module}/model-spec.json")).models : model.id if model.terraform_managed]))) == 0
+    error_message = "Only Terraform-managed aliases in the pinned model specification may be selected."
+  }
+}
+
 variable "openai_capacity" {
   type    = number
   default = 120
@@ -52,7 +62,7 @@ locals {
   }
   deployment_models = {
     for model in local.model_spec.models : model.id => model
-    if model.terraform_managed
+    if model.terraform_managed && (var.model_aliases == null ? true : contains(var.model_aliases, model.id))
   }
   openai_deployments = {
     for deployment in flatten([

@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "gateway" / "catalog" / "dev-models.json"
 
 
-def model_catalog() -> tuple[dict[str, dict], dict[str, dict]]:
-    entries = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))["models"]
+def model_catalog(path: Path = CATALOG_PATH) -> tuple[dict[str, dict], dict[str, dict]]:
+    entries = json.loads(path.read_text(encoding="utf-8"))["models"]
     return (
         {item["id"]: item for item in entries if item.get("enabled") is True},
         {item["id"]: item for item in entries if item.get("placeholder") is True},
@@ -48,9 +48,15 @@ def is_completion(payload: Any, *, max_completion_tokens: int = 64) -> bool:
 
 
 def verify(
-    base: str, key: str, origins: list[str], *, smoke: bool, candidate_aliases: list[str] | None = None
+    base: str,
+    key: str,
+    origins: list[str],
+    *,
+    smoke: bool,
+    candidate_aliases: list[str] | None = None,
+    catalog_path: Path = CATALOG_PATH,
 ) -> dict:
-    enabled, placeholders = model_catalog()
+    enabled, placeholders = model_catalog(catalog_path)
     candidates = set(candidate_aliases or [])
     if not candidates <= placeholders.keys():
         raise ValueError("Candidate routes must be currently disabled catalog placeholders.")
@@ -190,6 +196,7 @@ def main() -> None:
         help="Temporarily routed but hidden alias to direct-smoke through the guarded adapter.",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path, default=CATALOG_PATH)
     args = parser.parse_args()
     resource = (
         f"/subscriptions/{args.subscription}/resourceGroups/{args.resource_group}"
@@ -213,6 +220,7 @@ def main() -> None:
         args.portal_origin,
         smoke=args.smoke,
         candidate_aliases=args.candidate_alias,
+        catalog_path=args.catalog,
     )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
