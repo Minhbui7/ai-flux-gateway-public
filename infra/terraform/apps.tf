@@ -105,7 +105,8 @@ resource "azurerm_linux_web_app" "main" {
     detailed_error_messages = false
     failed_request_tracing  = false
   }
-  depends_on = [azurerm_role_assignment.acr_pull]
+  # Elevated privileges required for role assignment; manual AcrPull grants must precede app rollout.
+  depends_on = [terraform_data.approval]
 }
 
 resource "azapi_resource" "api_sidecar" {
@@ -219,5 +220,6 @@ resource "azurerm_linux_function_app" "ingestion" {
       error_message = "Ingestion requires a verified immutable image, accepted dev catalog and explicit activation cutoff."
     }
   }
-  depends_on = [azurerm_role_assignment.function_storage]
+  # Elevated privileges required for role assignment; storage grants must precede Function rollout.
+  depends_on = [terraform_data.approval]
 }

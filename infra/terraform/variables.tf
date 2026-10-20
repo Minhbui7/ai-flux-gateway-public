@@ -19,6 +19,17 @@ variable "sql_location" {
   nullable    = true
 }
 
+variable "model_location" {
+  description = "Primary Foundry/Language region, independent of gateway/apps. Null preserves existing root behavior; guided pilots explicitly pin eastus."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = var.model_location == null ? true : var.model_location == "eastus"
+    error_message = "The pinned primary Foundry model contracts require eastus."
+  }
+}
+
 variable "name_prefix" {
   type = string
   validation {
@@ -29,6 +40,12 @@ variable "name_prefix" {
 
 variable "deployment_approved" {
   description = "Explicit cost/config approval. Does NOT enable inference."
+  type        = bool
+  default     = false
+}
+
+variable "manual_rbac_verified" {
+  description = "Operator attests an authorized administrator provisioned and verified the documented manual RBAC grants before runtime/inference or edge rollout. Not needed for prerequisites."
   type        = bool
   default     = false
 }
@@ -301,7 +318,7 @@ variable "apps" {
 }
 
 variable "registry_resource_id" {
-  description = "Existing publicly reachable authenticated ACR unless create_container_registry is selected; app identities get AcrPull."
+  description = "Existing publicly reachable authenticated ACR unless create_container_registry is selected; an administrator must grant app identities AcrPull manually."
   type        = string
   default     = ""
   validation {

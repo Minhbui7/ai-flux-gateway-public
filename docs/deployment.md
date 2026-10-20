@@ -11,16 +11,16 @@ deployment; a customer rehearsal and the acceptance below are still required.
 
 | Setting | Supported choice |
 | --- | --- |
-| Operator | Windows, PowerShell 5.1+, Python 3.11+, Azure CLI, Git, Terraform 1.16.x (tested locally with 1.16.5); locked AzureRM/AzAPI providers |
+| Operator | Windows, PowerShell 5.1+, Python 3.11+, Azure CLI, Git, Terraform 1.12.1; locked AzureRM/AzAPI providers |
 | Identity | One customer Entra tenant, three new dedicated API/customer/admin registrations, signed-in bootstrap user |
-| Gateway/app region | East US only; current guarded policy/model evidence requires East US and Sweden Central backends |
-| SQL region | `eastus` or `australiaeast`, subject to customer entitlement and capacity |
+| Gateway/app region | `eastus` or `southeastasia`; primary models remain pinned to East US, with Sweden Central backends |
+| SQL region | `eastus`, `australiaeast` or `southeastasia`, subject to customer entitlement and capacity |
 | Network presets | `10.240.0.0/16` or `10.241.0.0/16`; `.1.0/24` App Gateway, `.3.0/24` private endpoints, `.4.0/24` integrated API/Function |
 | Compute | Basic v2 APIM capacity 1, B1 Linux apps, S0 SQL; customer reviews cost and regional support before applying |
 | Telemetry retention | 30 days; customer approval and metadata-only logging remain required |
 | Models | Pinned `gpt-5.6-luna`, `gpt-5.6-sol`, `claude-haiku-5-5`; no silent model/version/region substitution |
-| DNS/TLS | New Azure-assigned `<dns_label>.eastus.cloudapp.azure.com` and new customer-issued certificate in the new private vault |
-| State | Customer-local, separate main/model state files; no operator VM, NAT, remote backend or GitHub runner |
+| DNS/TLS | New Azure-assigned `<dns_label>.<location>.cloudapp.azure.com` and new customer-issued certificate in the new private vault |
+| State | Separate main/model Azure Blob state keys in an existing approved private container; Azure CLI/Entra data-plane access required |
 | Customer access | New direct HTTPS App Service portals/API and guarded APIM `/dev/llm/v1`; edge remains operator-restricted candidate |
 
 SQL/network options are deliberately limited. These are deployment constraints,
@@ -40,6 +40,45 @@ Owner or Contributor for deployment. **Contributor alone cannot assign Azure rol
 or create custom roles**: an authorized Owner/RBAC administrator must separately
 delegate the required role-assignment/custom-role actions at the reviewed scopes.
 Resource deployment cannot grant itself that authority.
+
+### Manual Azure RBAC handoff
+
+**Elevated privileges required for role assignment.** The main Terraform root
+creates user-assigned identities, but does **not** create role assignments or
+custom role definitions. An authorized Azure RBAC administrator must provision
+and verify the following grants after the prerequisites apply; this must happen
+before platform, inference or edge rollout. `identity_principal_ids`,
+`apim_resource_id`, and `container_registry` Terraform outputs identify some
+of the exact principals and scopes; resolve the other resources in the same
+resource group. Never substitute a subscription-wide scope for a resource scope.
+
+| Identity | Role | Resource scope |
+| --- | --- | --- |
+| API, customer, admin (and ingestion if using a container image) | `AcrPull` | This deployment's container registry |
+| Gateway | `Cognitive Services User` | Each of the Content Safety and Language/Foundry accounts |
+| Ingestion | `Storage Blob Data Owner`, `Storage Queue Data Contributor`, `Storage Table Data Contributor` | This deployment's Function storage account |
+| Gateway | `Key Vault Secrets User` | This deployment's Key Vault |
+| API, customer, admin, gateway, ingestion | `Monitoring Metrics Publisher` | This deployment's Application Insights |
+| API, ingestion | `Log Analytics Reader` | This deployment's Log Analytics workspace |
+| API | Custom `<prefix>-subscription-manager` role | This deployment's APIM service |
+| Edge (only when TLS edge is enabled) | `Key Vault Secrets User` | The reviewed certificate Key Vault |
+| API (only when admin settings enabled) | Custom `<prefix>-gateway-settings` role | The approved APIM settings fragment(s) |
+
+The custom subscription-manager role is assignable only within this resource
+group and permits APIM service/products/subscriptions read, APIM subscription
+write, listSecrets and primary/secondary key regeneration. It does **not**
+manage Azure subscriptions. The optional gateway-settings role permits only
+APIM policy fragment read/write. The exact least-privilege definitions remain
+commented in `infra/terraform/rbac.tf` and `gateway-settings.tf` for administrator
+review; Terraform must not be used to create them from this root.
+
+The administrator should record the principal ID, resource scope, role ID and
+verified effective assignment for every grant through the approved internal
+process. Set `manual_rbac_verified = true` **only** after checking the grants;
+the Terraform precondition blocks runtime/inference rollout until then. Manual
+changes to roles are outside this root's state and must be managed separately.
+Existing saved plans with Terraform-managed RBAC are invalid after this code
+change: discard and regenerate them before review or apply.
 
 Azure Owner/Contributor also does not confer Entra app-registration/consent rights,
 SQL data-plane administration, model entitlements or DNS/certificate authority.
@@ -68,6 +107,26 @@ encrypted disk storage. Restrict access to the deployment operator and approved
 backup administrators. The launcher ignores this directory in Git and build
 uploads; ignore rules are **not encryption or access control**. Do not place the
 configuration or state elsewhere under the Docker build source tree.
+
+### Azure Blob Terraform state
+
+Both deployment roots declare `backend "azurerm" {}`. Configure an existing private
+Blob container in the optional `backend` object of the customer configuration,
+with distinct `<prefix>/main.tfstate` and `<prefix>/models.tfstate` keys. The
+launcher writes separate ignored `.backend.hcl` files, uses Azure CLI/Entra
+authentication (`use_azuread_auth = true`, `use_cli = true`) and does not use
+storage account keys. The signed-in operator needs Storage Blob Data Contributor
+at the state-account scope and network access to the Blob data endpoint. This
+permission does not grant the separate Azure RBAC role-assignment permissions.
+
+To migrate an existing environment, use Terraform `init -migrate-state`
+after binding the old local backend to the actual protected state file. Initialize
+the separate models key empty only if no model resources are already managed.
+Preserve the protected pre-migration local backup until the remote state and
+recovery procedure have been reviewed. Do not reapply saved local-state plans or
+pass `-state` when using the remote backend. Before migration for any other
+environment, confirm the destination key is empty and that no other Terraform
+writer is active; do not automatically adopt or overwrite existing remote state.
 
 Resource providers must be registered by an authorized subscription administrator.
 The launcher checks the required namespaces and reports missing ones; it does not
@@ -189,7 +248,8 @@ ambiguous application by deleting it or assigning ownership automatically.
 Default execution is an **already approved private-connected Windows operator
 host**, not temporary runtime-identity elevation or public SQL firewall access.
 It needs private DNS/1433, the configured Entra SQL administrator authority, ODBC
-Driver 18, the repository/package and protected local state for this environment.
+Driver 18, the repository/package and authorized access to the remote Terraform
+state for this environment (plus protected local configuration and backups).
 If no such route exists, network administrators must supply one; deployment stops.
 Securely transfer the isolated customer state/configuration if moving hosts, ensure
 one writer, and preserve custody/backup. No VM/NAT is provisioned as a shortcut.

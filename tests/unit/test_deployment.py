@@ -29,6 +29,13 @@ def config(tmp_path):
     ):
         value[key] = f"00000000-0000-0000-0000-{index:012d}"
     value.update(operator_ip="8.8.8.8", dns_label="customer-pilot")
+    value["backend"] = {
+        "resource_group_name": "test-state-rg",
+        "storage_account_name": "teststateaccount",
+        "container_name": "tfstate",
+        "main_key": value["name_prefix"] + "/main.tfstate",
+        "models_key": value["name_prefix"] + "/models.tfstate",
+    }
     value["attestations"] = dict.fromkeys(ATTESTATIONS, True)
     path = tmp_path / "customer.json"
     write_json(path, value)
@@ -43,6 +50,8 @@ class FakeRunner:
 
     def __call__(self, args, *, json_output=True):
         self.commands.append(args)
+        if args[0] == "az":
+            return {"exists": False}
         if args[0] == "terraform":
             if args[2] == "plan":
                 Path(next(arg.removeprefix("-out=") for arg in args if arg.startswith("-out="))).write_bytes(
@@ -104,6 +113,9 @@ def test_powershell_entry_point_without_approval_reaches_configuration_validatio
         {"operator_ip": "8.8.8.8/32"},
         {"operator_ip": "224.0.0.1"},
         {"sql_location": "unverified"},
+        {"location": "swedencentral"},
+        {"location": "Southeast Asia"},
+        {"model_location": "southeastasia"},
         {"network_profile": "10.242"},
         {"admin_settings_enabled": 1},
         {"certificate_secret_id": "https://other.vault.azure.net/secrets/cert"},
@@ -143,6 +155,7 @@ def test_lock_survives_unrelated_existing_file(tmp_path):
 def test_prerequisite_profile_preserves_private_data_and_release_gates(launcher):
     values = launcher.main_inputs("prerequisites")
     assert values["location"] == "eastus"
+    assert values["model_location"] == "eastus"
     assert values["app_service_sku"] == "B1"
     assert values["network"]["app_service_integration_subnet"] == "10.240.4.0/24"
     assert values["hybrid_private_data_enabled"]
@@ -167,7 +180,7 @@ def test_saved_plan_is_isolated_and_requires_exact_approval(launcher):
     launcher.apply("prerequisites", approval)
     command = launcher.run.commands[-1]
     assert "-parallelism=1" in command
-    assert f"-state={launcher.main_state}" in command
+    assert not any(arg.startswith("-state=") for arg in command)
     assert read_json(launcher.directory / "progress.json")["phase"] == "prerequisites"
     assert not (launcher.directory / "plan-review.json").exists()
 
@@ -265,7 +278,7 @@ def test_model_root_has_separate_state_and_original_pinned_subset(launcher, monk
     inputs = read_json(launcher.directory / "models.tfvars.json")
     assert inputs["model_aliases"] == list(ALIASES[:2])
     launcher.apply("models", approval)
-    assert f"-state={launcher.models_state}" in launcher.run.commands[-1]
+    assert not any(arg.startswith("-state=") for arg in launcher.run.commands[-1])
     assert "-parallelism=1" in launcher.run.commands[-1]
 
 

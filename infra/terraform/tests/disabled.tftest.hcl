@@ -59,12 +59,32 @@ mock_provider "azurerm" {
 
 mock_provider "azapi" {}
 
+run "southeastasia_keeps_primary_foundry_in_eastus" {
+  command = plan
+  variables {
+    deployment_stage                = "prerequisites"
+    public_edge_live_gates_approved = false
+    location                        = "southeastasia"
+    model_location                  = "eastus"
+    sql_location                    = "southeastasia"
+  }
+  assert {
+    condition     = azapi_resource.ai["language"].location == "eastus" && azapi_resource.ai["safety"].location == "southeastasia"
+    error_message = "Gateway region must not move the pinned primary Foundry account."
+  }
+  assert {
+    condition     = azurerm_api_management.main.location == "southeastasia" && azurerm_mssql_server.main[0].location == "southeastasia"
+    error_message = "APIM and explicitly selected SQL must use Southeast Asia."
+  }
+}
+
 variables {
   subscription_id                 = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
   resource_group_name             = "rg-aiflux-fdpo-dev"
   location                        = "eastus"
   name_prefix                     = "aiflux-test"
   deployment_approved             = true
+  manual_rbac_verified            = true
   deployment_stage                = "public-edge"
   public_edge_live_gates_approved = true
   publisher_email                 = "test@example.invalid"
@@ -131,7 +151,7 @@ run "edge_bootstrap_needs_no_certificate_or_live_attestation" {
     error_message = "Bootstrap must not require or invent a TLS certificate."
   }
   assert {
-    condition     = alltrue([for path in azurerm_application_gateway.main["public"].url_path_map : path.default_backend_address_pool_name == "deny"]) && toset(keys(local.appgw_backends)) == toset(["api", "deny"]) && length(azurerm_role_assignment.edge_certificate) == 0
+    condition     = alltrue([for path in azurerm_application_gateway.main["public"].url_path_map : path.default_backend_address_pool_name == "deny"]) && toset(keys(local.appgw_backends)) == toset(["api", "deny"])
     error_message = "Bootstrap permits only HTTP-01, has no portal/APIM backend, and grants no certificate read role."
   }
   assert {
@@ -151,13 +171,8 @@ run "edge_candidate_is_operator_restricted_without_live_attestation" {
     error_message = "Candidate TLS can be tested before release, but its WAF operator gate must remain and gateway URL must not be released."
   }
   assert {
-    condition = azurerm_role_assignment.edge_certificate["edge"].scope == (
-      var.edge.certificate_vault_id
-      ) && azurerm_role_assignment.edge_certificate["edge"].role_definition_name == "Key Vault Secrets User" && (
-      azurerm_role_assignment.edge_certificate["edge"].principal_id ==
-      azurerm_user_assigned_identity.identity["edge"].principal_id
-    )
-    error_message = "Application Gateway needs read-only secret access scoped to its Key Vault; the API writer remains limited to the exact TLS secret."
+    condition     = azurerm_user_assigned_identity.identity["edge"].name == "${var.name_prefix}-edge-identity" && var.manual_rbac_verified
+    error_message = "Candidate edge needs its user-assigned identity and verified manual vault access before rollout."
   }
 }
 
@@ -210,8 +225,8 @@ run "apim_first_stage" {
     error_message = "APIM/protection must not require operator bootstrap, VM, NAT, or networking."
   }
   assert {
-    condition     = azapi_resource.ai["language"].body.kind == "AIServices" && azapi_resource.ai["language"].name == "${var.name_prefix}-foundry" && azurerm_role_assignment.ai_user["language"].role_definition_name == "Cognitive Services User"
-    error_message = "Language PII must use the Foundry umbrella resource with a resource-scoped gateway identity role."
+    condition     = azapi_resource.ai["language"].body.kind == "AIServices" && azapi_resource.ai["language"].name == "${var.name_prefix}-foundry" && azurerm_user_assigned_identity.identity["gateway"].name == "${var.name_prefix}-gateway-identity"
+    error_message = "Language PII must use the Foundry umbrella resource; the gateway identity awaits manual resource-scoped RBAC."
   }
   assert {
     condition     = length(azurerm_linux_web_app.main) == 0 && length(azurerm_mssql_server.main) == 0 && length(azurerm_linux_function_app.ingestion) == 0 && length(azurerm_application_gateway.main) == 0
@@ -270,6 +285,7 @@ run "independent_platform_prerequisites" {
   command = plan
   variables {
     deployment_stage                        = "prerequisites"
+    manual_rbac_verified                    = false
     entra                                   = null
     apps                                    = {}
     protection_language_enabled             = false
@@ -286,8 +302,8 @@ run "independent_platform_prerequisites" {
     error_message = "Blocked identity/artifact prerequisites must not create falsely configured runtime apps or release routes."
   }
   assert {
-    condition     = length(azurerm_role_assignment.acr_pull) == 3 && length(azurerm_role_assignment.function_storage) == 3 && length(azurerm_role_assignment.monitor_reader) == 2 && length(azurerm_role_assignment.subscription_manager) == 1
-    error_message = "Prerequisites must prepare resource-scoped managed identity roles without directory-wide permission or an enabled runtime."
+    condition     = length(azurerm_user_assigned_identity.identity) == 5 && !var.manual_rbac_verified
+    error_message = "Prerequisites create identities without claiming manual role assignments are complete."
   }
   assert {
     condition     = azurerm_mssql_server.main[0].location == coalesce(var.sql_location, var.location)
@@ -600,7 +616,7 @@ run "approved_adapter_token_limits" {
 run "admin_settings_are_opt_in" {
   command = plan
   assert {
-    condition     = !var.dev_admin_settings_enabled && length(azapi_resource.gateway_settings) == 0 && length(azurerm_role_assignment.gateway_settings) == 0
+    condition     = !var.dev_admin_settings_enabled && length(azapi_resource.gateway_settings) == 0
     error_message = "Existing deployments must retain code-managed settings with no new runtime fragment permissions."
   }
   assert {
@@ -630,8 +646,8 @@ run "admin_settings_keep_invariant_policy_owned_by_terraform" {
     error_message = "Opt-in must bootstrap a single denied settings snapshot, not guess safety or quota values."
   }
   assert {
-    condition     = toset(azurerm_role_definition.gateway_settings[0].permissions[0].actions) == toset(["Microsoft.ApiManagement/service/policyFragments/read", "Microsoft.ApiManagement/service/policyFragments/write"])
-    error_message = "Runtime settings must not grant API policy, backend or service write permissions."
+    condition     = var.manual_rbac_verified && azurerm_user_assigned_identity.identity["api"].name == "${var.name_prefix}-api-identity"
+    error_message = "Runtime settings require an API identity and manually verified narrow fragment permissions."
   }
 }
 
@@ -690,7 +706,16 @@ run "ingestion_immutable_container_configuration" {
     error_message = "Function image configuration must reconstruct exactly one sha256 digest separator."
   }
   assert {
-    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].container_registry_use_managed_identity && azurerm_role_assignment.acr_pull["ingestion"].role_definition_name == "AcrPull"
-    error_message = "Function registry access must use scoped managed identity, not publishing credentials."
+    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].container_registry_use_managed_identity && var.manual_rbac_verified
+    error_message = "Function registry access requires a verified manual AcrPull grant, not publishing credentials."
   }
+}
+
+run "runtime_requires_verified_manual_rbac" {
+  command = plan
+  variables {
+    deployment_stage     = "platform"
+    manual_rbac_verified = false
+  }
+  expect_failures = [terraform_data.approval]
 }

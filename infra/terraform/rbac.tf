@@ -1,3 +1,7 @@
+# Elevated privileges required for role assignment
+# These RBAC resources are deliberately inactive. An authorized RBAC administrator
+# must create the scoped custom role and grants described in docs/deployment.md.
+/*
 resource "azurerm_role_definition" "subscription_manager" {
   for_each    = local.prerequisites_stage ? { platform = true } : {}
   name        = "${local.prefix}-subscription-manager"
@@ -82,3 +86,4 @@ resource "azurerm_role_assignment" "function_storage" {
   role_definition_name = each.key
   principal_id         = azurerm_user_assigned_identity.identity["ingestion"].principal_id
 }
+*/
