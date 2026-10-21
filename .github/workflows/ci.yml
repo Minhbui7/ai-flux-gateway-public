@@ -26,6 +26,7 @@ jobs:
       - run: ruff check services/control-plane/src tests/unit scripts/deployment infra/scripts/bootstrap-entra.py infra/models/verify.py gateway/tools/verify_adapter.py
       - run: mypy
       - run: pytest -q tests/unit tests/contract
+      - run: python -m unittest discover -s tests/contract -p "test_gateway*.py"
       - name: Validate migrations
         env:
           AIFLUX_DATABASE_URL: sqlite:///migration-check.db
@@ -77,4 +78,3 @@ jobs:
       - run: terraform -chdir=infra/state validate
       - run: terraform -chdir=infra/state test
       - run: python gateway/tools/validate_bundle.py
-      - run: python -m unittest discover -s tests/contract -p "test_gateway*.py"
