@@ -55,8 +55,17 @@ class PublicDeploymentContractTests(unittest.TestCase):
 
     def test_remote_build_context_excludes_deployment_credentials(self):
         exclusions = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
-        for pattern in ("infra", ".deployment", "**/*.tfplan", "**/*.tfvars", "**/*.tfstate*"):
+        for pattern in ("infra/*", ".deployment", ".azure", "**/*.tfplan", "**/*.tfvars", "**/*.tfstate*"):
             self.assertIn(pattern, exclusions)
+        self.assertEqual(
+            [pattern for pattern in exclusions if pattern.startswith("!infra/")],
+            ["!infra/sql", "!infra/sql/bootstrap-identities.sql"],
+        )
+        self.assertLess(exclusions.index("infra/*"), exclusions.index("!infra/sql"))
+        self.assertLess(exclusions.index("!infra/sql"), exclusions.index("infra/sql/*"))
+        self.assertLess(
+            exclusions.index("infra/sql/*"), exclusions.index("!infra/sql/bootstrap-identities.sql")
+        )
 
     def test_approved_dev_entra_bootstrap_does_not_create_secrets(self):
         source = (ROOT / "infra" / "scripts" / "bootstrap-entra.py").read_text(encoding="utf-8")

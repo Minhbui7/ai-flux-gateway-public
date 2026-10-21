@@ -1,10 +1,14 @@
-"""Execute the policy's exact C# expression, rather than a Python translation."""
+"""Execute exact policy C# using a .NET SDK or PowerShell's offline compiler.
+
+This checks expression syntax and behavior, not APIM's policy-expression allowlist.
+"""
 
 import copy
 import json
 import os
 import shutil
 import subprocess
+import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -100,7 +104,11 @@ del INVALID["stop-missing"]["stop_reason"]
 
 def execute_expression(tmp_path_factory, expression, fixtures):
     dotnet = os.environ.get("AIFLUX_DOTNET", shutil.which("dotnet"))
-    assert dotnet, "Install .NET 8 SDK (or set AIFLUX_DOTNET) to execute policy C# regressions."
+    pwsh = shutil.which("pwsh")
+    sdk = subprocess.run([dotnet, "--list-sdks"], capture_output=True, text=True,
+                         timeout=30) if dotnet else None
+    has_sdk = sdk is not None and sdk.returncode == 0 and bool(sdk.stdout.strip())
+    assert has_sdk or pwsh, "A .NET SDK or PowerShell 7 C# compiler is required."
     assert expression.startswith("@{") and expression.endswith("}")
     expression = expression[1:].replace("${completion_token_limit}", "100000")
     expression = expression.replace(
@@ -109,7 +117,8 @@ def execute_expression(tmp_path_factory, expression, fixtures):
         '(string)context.Variables["aiflux-model"] == "claude-sonnet-5-5" || '
         '(string)context.Variables["aiflux-model"] == "claude-opus-5-5"',
     )
-    harness = tmp_path_factory.mktemp("anthropic-csharp")
+    harness = ROOT / (".policy-csharp-" + uuid.uuid4().hex)
+    harness.mkdir()
     (harness / "Harness.csproj").write_text(
         '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
         "<TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup>"
@@ -126,7 +135,8 @@ using Newtonsoft.Json.Linq;
 
 public class PolicyBody {
     public string Json;
-    public T As<T>(bool preserveContent) { return JsonConvert.DeserializeObject<T>(Json); }
+    public object Value;
+    public T As<T>(bool preserveContent) { return Value == null ? JsonConvert.DeserializeObject<T>(Json) : (T)Value; }
 }
 public class PolicyResponse { public PolicyBody Body; }
 public class PolicyContext {
@@ -142,7 +152,13 @@ public class Normalizer {
     public string Execute(JObject response) {
         context.Variables["aiflux-model"] = (string)response["_alias"] ?? "claude-haiku-5-5";
         context.Variables["aiflux-backend-attempt"] = (int?)response["_attempts"] ?? 1;
-        context.Response = new PolicyResponse { Body = new PolicyBody { Json = response.ToString() } };
+        if (response["_rawSurrogate"] != null) {
+            response["choices"][0]["message"]["content"] = new string((char)(int)response["_rawSurrogate"], 1);
+        }
+        context.Response = new PolicyResponse { Body = new PolicyBody {
+            Json = response["_rawBody"] == null ? response.ToString() : (string)response["_rawBody"],
+            Value = response["_rawBody"] == null ? response : null
+        } };
         return Normalize();
     }
     private string Normalize()
@@ -155,7 +171,7 @@ public class Program {
         var results = new JObject();
         foreach (var fixture in JObject.Parse(Console.In.ReadToEnd()).Properties()) {
             try {
-                results[fixture.Name] = JObject.Parse(new Normalizer().Execute((JObject)fixture.Value));
+                results[fixture.Name] = JToken.Parse(new Normalizer().Execute((JObject)fixture.Value));
             } catch (Exception) {
                 results[fixture.Name] = new JObject { ["rejected"] = true };
             }
@@ -167,24 +183,136 @@ public class Program {
         encoding="utf-8",
     )
     env = os.environ | {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"}
-    build = subprocess.run(
-        [dotnet, "build", str(harness / "Harness.csproj"), "--verbosity", "quiet"],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=180,
-    )
-    assert build.returncode == 0, build.stdout + build.stderr
-    execution = subprocess.run(
-        [dotnet, str(harness / "bin" / "Debug" / "net8.0" / "Harness.dll")],
-        input=json.dumps(fixtures),
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-    )
-    assert execution.returncode == 0, execution.stderr
-    return json.loads(execution.stdout)
+    try:
+        if has_sdk:
+            build = subprocess.run(
+                [dotnet, "build", str(harness / "Harness.csproj"), "--verbosity", "quiet"],
+                capture_output=True, text=True, env=env, timeout=180,
+            )
+            assert build.returncode == 0, build.stdout + build.stderr
+            command = [dotnet, str(harness / "bin" / "Debug" / "net8.0" / "Harness.dll")]
+        else:
+            # PowerShell ships Newtonsoft and Roslyn; only suppress its runtime-version unification warning.
+            script = harness / "Run.ps1"
+            script.write_text(
+                '$ErrorActionPreference = "Stop"\n'
+                '$references = @(Get-ChildItem "$PSHOME\\ref\\*.dll" | ForEach-Object FullName)\n'
+                '$references += [Newtonsoft.Json.Linq.JObject].Assembly.Location\n'
+                'Add-Type -TypeDefinition (Get-Content -LiteralPath '
+                '"$PSScriptRoot\\Program.cs" -Raw) -ReferencedAssemblies $references '
+                '-CompilerOptions "/nowarn:1701"\n'
+                '[Program]::Main()\n',
+                encoding="utf-8",
+            )
+            command = [pwsh, "-NoProfile", "-NonInteractive", "-File", str(script)]
+        execution = subprocess.run(
+            command, input=json.dumps(fixtures), capture_output=True,
+            text=True, encoding="utf-8", env=env, timeout=60,
+        )
+        assert execution.returncode == 0, execution.stdout + execution.stderr
+        return json.loads(execution.stdout)
+    finally:
+        shutil.rmtree(harness)
+
+
+def protected_response(*texts):
+    return {"choices": [{"message": {"content": text}} for text in texts]}
+
+
+PROTECTED_VALID = {
+    "over-9000": "a" * 9001,
+    "ascii-cap-last-overlap": "a" * 35200 + "LAST" + "b" * 796,
+    "surrogate-cap": "😀" * 18000,
+    "surrogate-at-step": "a" * 8799 + "😀" + "b" * 18000,
+    "surrogate-at-end": "a" * 8999 + "😀" + "b" * 18000,
+    "surrogate-at-last-overlap": "a" * 35199 + "😀" + "z" * 799,
+    "empty-text": "",
+}
+
+
+@pytest.fixture(scope="module")
+def protected_chunks(tmp_path_factory):
+    policy = ET.parse(ROOT / "gateway" / "policies" / "dev-openai.xml.tftpl")
+    expression = policy.find(".//set-variable[@name='aiflux-protected-chunks']").get("value")
+    invalid = {
+        "overcap": protected_response("a" * 36001),
+        "surrogate-overcap": protected_response("😀" * 18001),
+        "all-choices-overcap": protected_response("a" * 18000, "b" * 18000),
+        "missing-choices": {},
+        "null-choices": {"choices": None},
+        "not-array": {"choices": {}},
+        "no-choices": {"choices": []},
+        "nonobject-choice": {"choices": ["answer"]},
+        "null-message": {"choices": [{"message": None}]},
+        "missing-content": {"choices": [{"message": {}}]},
+        "null-content": protected_response(None),
+        "nontext-content": protected_response([{"type": "text", "text": "answer"}]),
+        "nontext-later-choice": protected_response("valid first", 42),
+        "malformed-json": {"_rawBody": "{not-json"},
+        "null-json": {"_rawBody": "null"},
+        "unpaired-high-surrogate": protected_response("placeholder") | {"_rawSurrogate": 0xD800},
+        "unpaired-low-surrogate": protected_response("placeholder") | {"_rawSurrogate": 0xDC00},
+    }
+    for field in ("tool_calls", "function_call", "audio"):
+        item = protected_response("text", "another")
+        item["choices"][1]["message"][field] = {}
+        invalid[field] = item
+    fixtures = {name: protected_response(text) for name, text in PROTECTED_VALID.items()} | invalid
+    fixtures["multiple-choices"] = protected_response("first" * 1800, "😀" * 5000, "last answer")
+    return execute_expression(tmp_path_factory, expression, fixtures), invalid
+
+
+@pytest.mark.parametrize("name", PROTECTED_VALID)
+def test_exact_protected_chunks_cover_all_unicode_and_boundaries(protected_chunks, name):
+    results, _ = protected_chunks
+    chunks = results[name]
+    assert isinstance(chunks, list) and len(chunks) <= 5
+    assert all(len(chunk) <= 9000 for chunk in chunks)
+    for left, right in zip(chunks, chunks[1:]):
+        assert left[-200:] == right[:200]
+    rebuilt = chunks[0] + "".join(chunk[200:] for chunk in chunks[1:]) if chunks else ""
+    assert rebuilt == PROTECTED_VALID[name]
+    if name == "ascii-cap-last-overlap":
+        assert len(chunks) == 5 and len(chunks[-1]) == 800
+
+
+def test_exact_protected_chunks_scan_all_choices_not_only_prefix(protected_chunks):
+    results, _ = protected_chunks
+    chunks = results["multiple-choices"]
+    rebuilt = chunks[0] + "".join(chunk[200:] for chunk in chunks[1:])
+    assert rebuilt == "first" * 1800 + "\n" + "😀" * 5000 + "\nlast answer"
+    assert len(chunks) > 1 and chunks[-1].endswith("last answer")
+    assert all(len(chunk) <= 9000 for chunk in chunks)
+    assert all(left[-200:] == right[:200] for left, right in zip(chunks, chunks[1:]))
+
+
+def test_exact_protected_chunks_reject_malformed_nontext_and_overcap(protected_chunks):
+    results, invalid = protected_chunks
+    assert all(results[name] == {"rejected": True} for name in invalid)
+
+
+def test_exact_invariant_safety_floor_truth_table(tmp_path_factory):
+    source = (ROOT / "gateway" / "policies" / "dev-openai.xml.tftpl").read_text()
+    entries, expected = [], {}
+    for allowed in (False, True):
+        for runtime in (False, True):
+            rendered = source.replace("${safety_relaxation_allowed}", str(allowed).lower())
+            for name in ("input_filter_expr", "output_filter_expr", "prompt_shield"):
+                rendered = rendered.replace("${" + name + "}", str(runtime).lower())
+            policy = ET.fromstring(rendered)
+            expressions = [node.get("condition") for node in policy.findall(".//when")
+                           if f'!{str(allowed).lower()} || ({str(runtime).lower()})'
+                           in node.get("condition", "")]
+            expressions += [node.get("shield-prompt") for node in
+                            policy.findall(".//llm-content-safety")[:2]]
+            assert len(expressions) == 5
+            for index, expression in enumerate(expressions):
+                key = f"{allowed}-{runtime}-{index}"
+                expression = expression[2:-1].replace('context.Request.Method', '"POST"')
+                entries.append(f'["{key}"] = ({expression})')
+                expected[key] = not allowed or runtime
+    expression = '@{ return new JObject { ' + ', '.join(entries) + ' }.ToString(); }'
+    assert execute_expression(tmp_path_factory, expression, {"floor": {}})["floor"] == expected
 
 
 @pytest.fixture(scope="module")

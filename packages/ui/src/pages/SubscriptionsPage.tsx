@@ -1,21 +1,40 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../client";
 import { useSession } from "../session";
-import type { KeyName, Subscription } from "../types";
+import type { AdminSubscription, KeyName } from "../types";
 import { AsyncView, Badge, ErrorState, Field, PageHeader, Pager, StateBadge, fmtDate, useAsync } from "../components/ui";
 
 const LIMIT = 25;
 
 export function SubscriptionsPage() {
+  const { api, clearKeys } = useSession();
+  const [organization, setOrganization] = useState("");
+  const organizations = useAsync(() => api.organizations(), [api]);
+  useEffect(() => { clearKeys(); return () => clearKeys(); }, [organization, clearKeys]);
+  return <>
+    <PageHeader title="Subscriptions" subtitle="Manage team subscriptions and API keys across organizations." />
+    <AsyncView state={organizations}>
+      {data => <>
+        <Field label="Organization">{id => <select id={id} value={organization} onChange={e => setOrganization(e.target.value)}>
+          <option value="">All organizations</option>
+          {data.items.map(org => <option key={org.id} value={org.id} disabled={!org.enabled}>{org.name}{!org.enabled ? " (disabled)" : ""}</option>)}
+        </select>}</Field>
+        <SubscriptionList key={organization} organization={organization} />
+      </>}
+    </AsyncView>
+  </>;
+}
+
+function SubscriptionList({ organization }: { organization: string }) {
   const { api } = useSession();
   const [offset, setOffset] = useState(0);
   const [version, setVersion] = useState(0);
-  const state = useAsync(() => api.subscriptions(offset, LIMIT), [api, offset, version]);
+  const state = useAsync(() => api.adminSubscriptions(offset, LIMIT, organization || undefined), [api, offset, version, organization]);
   return (
     <>
-      <PageHeader title="Team subscriptions" subtitle="Each subscription has primary and secondary keys. Keys are shown only when you reveal them and are never stored." />
-      <CreateForm onCreated={() => { setOffset(0); setVersion((v) => v + 1); }} />
-      <AsyncView state={state} isEmpty={(d) => d.items.length === 0} emptyTitle="No subscriptions yet" emptyHint="Create a team subscription above to get your first API keys.">
+      {organization ? <CreateForm organization={organization} onCreated={() => { setOffset(0); setVersion((v) => v + 1); }} />
+        : <p className="muted">Select an organization to create a subscription.</p>}
+      <AsyncView state={state} isEmpty={(d) => d.items.length === 0} emptyTitle="No subscriptions yet" emptyHint="Select an organization and create a team subscription.">
         {(d) => (
           <>
             <ul className="cards">
@@ -29,13 +48,13 @@ export function SubscriptionsPage() {
   );
 }
 
-function CreateForm({ onCreated }: { onCreated: () => void }) {
+function CreateForm({ organization, onCreated }: { organization: string; onCreated: () => void }) {
   const { api } = useSession();
   const [name, setName] = useState("");
   const [team, setTeam] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [created, setCreated] = useState<Subscription>();
+  const [created, setCreated] = useState<AdminSubscription>();
   // One idempotency key per logical submission; retries after an error reuse it.
   const idem = useRef<string>(crypto.randomUUID());
 
@@ -48,7 +67,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
     setBusy(true);
     setError(undefined);
     try {
-      const sub = await api.createSubscription({ name: name.trim(), team: team.trim() }, idem.current);
+      const sub = await api.adminCreateSubscription({ organization_id: organization, name: name.trim(), team: team.trim() }, idem.current);
       setCreated(sub);
       setName("");
       setTeam("");
@@ -75,18 +94,24 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
           “{created.name}” was submitted and is <StateBadge state={created.state} />.
           {created.state === "pending" && " Provisioning is in progress; use Reconcile on the card to refresh."}
           {created.state === "failed" && " Provisioning failed; use Reconcile to retry, or contact IDS."}
+          {created.gateway_access === "pending" && ` Gateway access pending: ${created.gateway_message}`}
         </p>
       )}
     </section>
   );
 }
 
-function SubscriptionCard({ sub, onChanged }: { sub: Subscription; onChanged: () => void }) {
+function SubscriptionCard({ sub, onChanged }: { sub: AdminSubscription; onChanged: () => void }) {
   const { api, keys, setKey, clearKeys } = useSession();
   const [busy, setBusy] = useState<string>();
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string }>();
   const [visible, setVisible] = useState<Partial<Record<KeyName, boolean>>>({});
   const revealed = keys[sub.id] ?? {};
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; clearKeys(sub.id); };
+  }, [clearKeys, sub.id]);
 
   async function act(label: string, fn: () => Promise<string | void>) {
     setBusy(label);
@@ -102,7 +127,9 @@ function SubscriptionCard({ sub, onChanged }: { sub: Subscription; onChanged: ()
   }
 
   const reveal = (k: KeyName) => act(`reveal-${k}`, async () => {
-    setKey(sub.id, k, await api.revealKey(sub.id, k));
+    const value = await api.adminRevealKey(sub.id, k);
+    if (!mounted.current) return;
+    setKey(sub.id, k, value);
     setVisible((v) => ({ ...v, [k]: false }));
     return `${k} key revealed. It is held in memory only until you hide it or sign out.`;
   });
@@ -116,7 +143,11 @@ function SubscriptionCard({ sub, onChanged }: { sub: Subscription; onChanged: ()
     });
   };
   const setState = (s: "active" | "suspended") => act(`state-${s}`, async () => { await api.setState(sub.id, s); onChanged(); return `Subscription ${s === "active" ? "activated" : "suspended"}.`; });
-  const reconcile = () => act("reconcile", async () => { const r = await api.reconcile(sub.id); onChanged(); return `Reconciled: state is ${r.state}.`; });
+  const reconcile = () => act("reconcile", async () => {
+    const r = await api.reconcile(sub.id); onChanged();
+    if (r.gateway_access === "pending") throw new ApiError(409, `Gateway access pending: ${r.gateway_message}`);
+    return `Reconciled: state is ${r.state}.`;
+  });
   const copy = (v: string) => act("copy", async () => { await navigator.clipboard.writeText(v); return "Copied to clipboard."; });
 
   return (
@@ -124,12 +155,14 @@ function SubscriptionCard({ sub, onChanged }: { sub: Subscription; onChanged: ()
       <div className="card-head">
         <div>
           <h2>{sub.name}</h2>
-          <p className="muted">Team {sub.team} · created {fmtDate(sub.created_at)}</p>
+          <p className="muted">{sub.organization_name} · Team {sub.team} · created {fmtDate(sub.created_at)}</p>
         </div>
         <StateBadge state={sub.state} />
       </div>
       {sub.state === "failed" && <p className="notice bad">Provisioning failed. Reconcile to retry or contact IDS.</p>}
       {sub.state === "pending" && <p className="notice">Provisioning is pending. Keys are unavailable until the subscription is active.</p>}
+      {sub.gateway_access === "pending" && <p role="alert" className="notice bad">Gateway access pending: {sub.gateway_message}</p>}
+      {sub.gateway_access === "not_managed" && <p className="notice">{sub.gateway_message}</p>}
       <div className="keys">
         {(["primary", "secondary"] as KeyName[]).map((k) => (
           <div key={k} className="key-row">

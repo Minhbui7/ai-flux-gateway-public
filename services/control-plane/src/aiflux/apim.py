@@ -1,5 +1,7 @@
 import re
+import time
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -61,7 +63,7 @@ class ApimClient:
             )
         except httpx.HTTPError as exc:
             raise ApimError() from exc
-        if response.status_code not in (200, 201, 204):
+        if response.status_code not in (200, 201, 202, 204):
             raise ApimError(response.status_code)
         return response
 
@@ -95,9 +97,9 @@ class ApimClient:
         return value, etag
 
     def put_settings_fragment(self, scope: str, value: str, etag: str) -> None:
-        if not etag or etag == "*":
+        if not etag or etag == "*" or len(value.encode("utf-8")) > 65536:
             raise ApimError()
-        self._send(
+        response = self._send(
             "PUT", self._fragment_url(scope),
             {"properties": {
                 "description": (
@@ -106,6 +108,26 @@ class ApimClient:
                 "format": "rawxml", "value": value,
             }}, etag,
         )
+        operation = response.headers.get("Azure-AsyncOperation")
+        if operation is None:
+            if response.status_code == 202:
+                raise ApimError(202)
+            return
+        expected, actual = urlsplit(self._fragment_url(scope)), urlsplit(operation)
+        if (actual.scheme, actual.netloc, actual.path) != (
+            expected.scheme, expected.netloc, expected.path,
+        ):
+            raise ApimError()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            result = self._json(self._send("GET", operation))
+            state = result.get("status")
+            if state == "Succeeded":
+                return
+            if state not in ("InProgress", "Running", "Accepted"):
+                raise ApimError(409)
+            time.sleep(2)
+        raise ApimError(504)
 
     def ensure(self, sid: str, display_name: str, state: str) -> None:
         self._request(

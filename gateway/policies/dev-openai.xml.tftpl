@@ -115,14 +115,18 @@
         <rate-limit-by-key calls="${rpm_limit}" renewal-period="60" counter-key='@("rpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' />
         <llm-token-limit counter-key='@("tpm:" + (string)context.Subscription.Id + ":" + (string)context.Variables["aiflux-model"])' tokens-per-minute="${tpm_limit}" estimate-prompt-tokens="true" retry-after-variable-name="aiflux-token-retry-after" />
 %{ endif ~}
-        <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
-          <categories output-type="EightSeverityLevels">
-            <category name="Hate" threshold="${safety_threshold}" />
-            <category name="SelfHarm" threshold="${safety_threshold}" />
-            <category name="Sexual" threshold="${safety_threshold}" />
-            <category name="Violence" threshold="${safety_threshold}" />
-          </categories>
-        </llm-content-safety>
+        <choose>
+          <when condition='@(!${safety_relaxation_allowed} || (${input_filter_expr}))'>
+            <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="@(!${safety_relaxation_allowed} || (${prompt_shield}))">
+              <categories output-type="EightSeverityLevels">
+                <category name="Hate" threshold="${hate_threshold}" />
+                <category name="SelfHarm" threshold="${selfharm_threshold}" />
+                <category name="Sexual" threshold="${sexual_threshold}" />
+                <category name="Violence" threshold="${violence_threshold}" />
+              </categories>
+            </llm-content-safety>
+          </when>
+        </choose>
         <set-variable name="aiflux-redacted-documents" value="[]" />
 %{ for batch in range(5) ~}
         <choose>
@@ -208,14 +212,18 @@
           }
           return request.ToString();
         }]]></set-body>
-        <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="true">
-          <categories output-type="EightSeverityLevels">
-            <category name="Hate" threshold="${safety_threshold}" />
-            <category name="SelfHarm" threshold="${safety_threshold}" />
-            <category name="Sexual" threshold="${safety_threshold}" />
-            <category name="Violence" threshold="${safety_threshold}" />
-          </categories>
-        </llm-content-safety>
+        <choose>
+          <when condition='@(!${safety_relaxation_allowed} || (${input_filter_expr}))'>
+            <llm-content-safety backend-id="${safety_backend_id}" shield-prompt="@(!${safety_relaxation_allowed} || (${prompt_shield}))">
+              <categories output-type="EightSeverityLevels">
+                <category name="Hate" threshold="${hate_threshold}" />
+                <category name="SelfHarm" threshold="${selfharm_threshold}" />
+                <category name="Sexual" threshold="${sexual_threshold}" />
+                <category name="Violence" threshold="${violence_threshold}" />
+              </categories>
+            </llm-content-safety>
+          </when>
+        </choose>
         <choose>
 %{ for alias in openai_aliases ~}
           <when condition='@((string)context.Variables["aiflux-model"] == "${alias}")'>
@@ -275,6 +283,9 @@
     </choose>
   </inbound>
   <backend>
+%{ if managed_v2 ~}
+${forward_tree}
+%{ else ~}
     <retry condition='@(context.Response != null &amp;&amp; (context.Response.StatusCode == 500 || context.Response.StatusCode == 502 || context.Response.StatusCode == 503 || context.Response.StatusCode == 504))' count="1" interval="1" first-fast-retry="false">
       <set-variable name="aiflux-backend-attempt" value='@(context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-backend-attempt", 0) + 1)' />
       <choose>
@@ -300,6 +311,7 @@
       </choose>
       <forward-request timeout="${unified ? 240 : 45}" buffer-request-body="true" buffer-response="true" fail-on-error-status-code="false" />
     </retry>
+%{ endif ~}
   </backend>
   <outbound>
     <base />
@@ -407,6 +419,106 @@
     </choose>
     <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
 %{ endif ~}
+%{ if protected_material_available ~}
+    <choose>
+      <when condition='@(context.Response.StatusCode == 200 &amp;&amp; context.Request.Method == "POST" &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;("aiflux-managed-v2", false) &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;("aiflux-protected-material", false))'>
+        <set-variable name="aiflux-protected-chunks" value='@{
+          try {
+            var response = context.Response.Body.As&lt;JObject&gt;(preserveContent: true);
+            var choices = response == null ? null : response["choices"] as JArray;
+            if (choices == null || choices.Count == 0) { return ""; }
+            var parts = new List&lt;string&gt;();
+            foreach (var choice in choices) {
+              var item = choice as JObject;
+              var message = item == null ? null : item["message"] as JObject;
+              if (message == null || message["content"] == null || message["content"].Type != JTokenType.String) { return ""; }
+              foreach (var field in new [] { "tool_calls", "function_call", "audio" }) {
+                if (message[field] != null &amp;&amp; message[field].Type != JTokenType.Null) { return ""; }
+              }
+              parts.Add((string)message["content"]);
+            }
+            var text = string.Join("\n", parts);
+            if (text.Length &gt; 36000) { return ""; }
+            var offsets = new List&lt;int&gt; { 0 };
+            for (var i = 0; i &lt; text.Length; i++) {
+              if (Char.IsHighSurrogate(text[i])) {
+                if (i + 1 &gt;= text.Length || !Char.IsLowSurrogate(text[i + 1])) { return ""; }
+                i++;
+              } else if (Char.IsLowSurrogate(text[i])) { return ""; }
+              offsets.Add(i + 1);
+            }
+            var chunks = new JArray();
+            for (var start = 0; start &lt; offsets.Count - 1; start += 8800) {
+              var end = Math.Min(start + 9000, offsets.Count - 1);
+              chunks.Add(text.Substring(offsets[start], offsets[end] - offsets[start]));
+              if (end == offsets.Count - 1) { break; }
+            }
+            if (chunks.Count &gt; 5) { return ""; }
+            return chunks.ToString(Newtonsoft.Json.Formatting.None);
+          } catch { return ""; }
+        }' />
+        <set-variable name="aiflux-protected-state" value='@((string)context.Variables["aiflux-protected-chunks"] == "" ? "error" : "clear")' />
+%{ for chunk in range(5) ~}
+        <choose>
+          <when condition='@((string)context.Variables["aiflux-protected-state"] == "clear" &amp;&amp; JArray.Parse((string)context.Variables["aiflux-protected-chunks"]).Count &gt; ${chunk})'>
+            <send-request mode="new" response-variable-name="aiflux-protected-response" timeout="10" ignore-error="true">
+              <set-url>${protected_material_url}</set-url>
+              <set-method>POST</set-method>
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-body>@{
+                var chunks = JArray.Parse((string)context.Variables["aiflux-protected-chunks"]);
+                return new JObject { ["text"] = (string)chunks[${chunk}] }.ToString(Newtonsoft.Json.Formatting.None);
+              }</set-body>
+              <authentication-managed-identity resource="https://cognitiveservices.azure.com/" client-id="${gateway_identity_client}" ignore-error="false" />
+            </send-request>
+            <set-variable name="aiflux-protected-state" value='@{
+              var response = context.Variables.GetValueOrDefault&lt;IResponse&gt;("aiflux-protected-response");
+              if (response == null || response.StatusCode != 200) { return "error"; }
+              var body = response.Body.As&lt;JObject&gt;(preserveContent: true);
+              var analysis = body == null ? null : body["protectedMaterialAnalysis"] as JObject;
+              if (analysis == null || analysis["detected"] == null || analysis["detected"].Type != JTokenType.Boolean) { return "error"; }
+              return (bool)analysis["detected"] ? "detected" : "clear";
+            }' />
+          </when>
+        </choose>
+%{ endfor ~}
+        <choose>
+          <when condition='@((string)context.Variables["aiflux-protected-state"] == "detected")'>
+            <trace source="aiflux" severity="information">
+              <message>Protected text material was detected; no answer was released.</message>
+              <metadata name="category" value="ProtectedMaterial" />
+              <metadata name="action" value="blocked" />
+            </trace>
+            <return-response>
+              <set-status code="403" reason="Content safety policy rejected content" />
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+              <set-body>{"error":{"message":"Required content safety policy rejected the request or response.","type":"invalid_request_error","param":null,"code":"content_safety_rejected"}}</set-body>
+            </return-response>
+          </when>
+          <when condition='@((string)context.Variables["aiflux-protected-state"] != "clear")'>
+            <return-response>
+              <set-status code="503" reason="Gateway inspection or backend unavailable" />
+              <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+              <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+              <set-body>{"error":{"message":"The request could not be safely completed; no inspection or backend details are available.","type":"service_unavailable","param":null,"code":"gateway_unavailable"}}</set-body>
+            </return-response>
+          </when>
+        </choose>
+      </when>
+    </choose>
+%{ else ~}
+    <choose>
+      <when condition='@(context.Request.Method == "POST" &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;("aiflux-managed-v2", false) &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;("aiflux-protected-material", false))'>
+        <return-response>
+          <set-status code="503" reason="Gateway inspection or backend unavailable" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-body>{"error":{"message":"The request could not be safely completed; no inspection or backend details are available.","type":"service_unavailable","param":null,"code":"gateway_unavailable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+%{ endif ~}
     <choose>
       <when condition='@(context.Response.StatusCode >= 500)'>
         <return-response>
@@ -418,13 +530,13 @@
       </when>
     </choose>
     <choose>
-      <when condition='@(context.Request.Method == "POST")'>
+      <when condition='@(context.Request.Method == "POST" &amp;&amp; (!${safety_relaxation_allowed} || (${output_filter_expr})))'>
         <llm-content-safety backend-id="${safety_backend_id}" window-size="1000" window-overlap-size="100">
           <categories output-type="EightSeverityLevels">
-            <category name="Hate" threshold="${safety_threshold}" />
-            <category name="SelfHarm" threshold="${safety_threshold}" />
-            <category name="Sexual" threshold="${safety_threshold}" />
-            <category name="Violence" threshold="${safety_threshold}" />
+            <category name="Hate" threshold="${hate_threshold}" />
+            <category name="SelfHarm" threshold="${selfharm_threshold}" />
+            <category name="Sexual" threshold="${sexual_threshold}" />
+            <category name="Violence" threshold="${violence_threshold}" />
           </categories>
         </llm-content-safety>
       </when>
@@ -448,7 +560,7 @@
           <set-body>{"error":{"message":"The request must match the bounded development JSON schema.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
         </return-response>
       </when>
-      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt" || (context.LastError.PolicyId == "aiflux-managed-token-limit" &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 429))'>
+      <when condition='@(context.LastError.Reason == "RateLimitExceeded" || context.LastError.Reason == "TokenLimitExceededAfterPrompt" || context.LastError.Reason == "TokenLimitExceeded" || ((context.LastError.PolicyId == "aiflux-managed-token-limit" || context.LastError.PolicyId == "aiflux-managed-team-token-limit" || context.LastError.Source == "llm-token-limit") &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 429))'>
         <return-response>
           <set-status code="429" reason="Too Many Requests" />
           <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
@@ -457,13 +569,31 @@
           <set-body>{"error":{"message":"The subscription model limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
         </return-response>
       </when>
-      <when condition='@(context.LastError.PolicyId == "aiflux-managed-token-limit" &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 403)'>
+      <when condition='@(context.LastError.Reason == "TokenQuotaExceeded" || ((context.LastError.PolicyId == "aiflux-managed-token-limit" || context.LastError.PolicyId == "aiflux-managed-team-token-limit" || context.LastError.Source == "llm-token-limit") &amp;&amp; context.Response != null &amp;&amp; context.Response.StatusCode == 403))'>
         <return-response>
           <set-status code="403" reason="Token quota exceeded" />
           <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
           <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
           <set-header name="Retry-After" exists-action="override"><value>@(context.Variables.ContainsKey("aiflux-token-retry-after") &amp;&amp; context.Variables["aiflux-token-retry-after"] is int ? ((int)context.Variables["aiflux-token-retry-after"]).ToString() : context.Response.Headers.GetValueOrDefault("Retry-After", "60"))</value></set-header>
           <set-body>{"error":{"message":"The subscription model token quota was exceeded.","type":"insufficient_quota","param":null,"code":"token_quota_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Source == "limit-concurrency")'>
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>1</value></set-header>
+          <set-body>{"error":{"message":"The concurrent request limit was exceeded.","type":"rate_limit_error","param":null,"code":"concurrency_limit_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "QuotaExceeded" || context.LastError.Source == "quota-by-key" || context.LastError.PolicyId == "aiflux-managed-request-quota-team" || context.LastError.PolicyId == "aiflux-managed-request-quota-subscription")'>
+        <return-response>
+          <set-status code="403" reason="Request quota exceeded" />
+          <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+          <set-header name="Cache-Control" exists-action="override"><value>no-store</value></set-header>
+          <set-header name="Retry-After" exists-action="override"><value>@(Math.Max(1, context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-request-quota-retry-after", 60)).ToString())</value></set-header>
+          <set-body>{"error":{"message":"The request quota was exceeded.","type":"insufficient_quota","param":null,"code":"request_quota_exceeded"}}</set-body>
         </return-response>
       </when>
       <when condition='@(context.LastError.Reason == "ContentSafetyPolicyViolated")'>

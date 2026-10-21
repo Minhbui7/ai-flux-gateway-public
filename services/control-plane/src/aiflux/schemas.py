@@ -15,6 +15,10 @@ class SubscriptionCreate(Input):
     team: str = Field(min_length=1, max_length=100)
 
 
+class AdminSubscriptionCreate(SubscriptionCreate):
+    organization_id: UUID
+
+
 class KeyRequest(Input):
     key: Literal["primary", "secondary"] = "primary"
 
@@ -88,9 +92,89 @@ class GatewayConfiguration(Input):
     quota_period: QuotaPeriod
 
 
+class GatewayLimits(Input):
+    rpm: int = Field(strict=True, ge=1, le=100000)
+    tpm: int = Field(strict=True, ge=1, le=20000)
+    token_quota: int = Field(strict=True, ge=1, le=2147483647)
+    quota_period: QuotaPeriod
+    concurrency: Literal[1, 2, 4, 8, 16]
+    request_quota: int | None = Field(default=None, strict=True, ge=1, le=2147483647)
+    request_quota_period: Literal["Daily", "Monthly"] = "Daily"
+
+    @field_validator("concurrency", mode="before")
+    @classmethod
+    def integer_concurrency(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("Concurrency requires an approved integer tier")
+        return value
+
+
+class SafetyConfiguration(Input):
+    profile: Literal["Standard", "Strict", "Custom"]
+    hate: int = Field(strict=True, ge=0, le=7)
+    violence: int = Field(strict=True, ge=0, le=7)
+    sexual: int = Field(strict=True, ge=0, le=7)
+    self_harm: int = Field(strict=True, ge=0, le=7)
+    prompt_attack: bool = Field(strict=True)
+    protected_material: bool = Field(strict=True)
+    input_filtering: bool = Field(strict=True)
+    output_filtering: bool = Field(strict=True)
+
+    @model_validator(mode="after")
+    def consistent_profile(self) -> "SafetyConfiguration":
+        if self.protected_material and not self.output_filtering:
+            raise ValueError("Protected-material detection requires output scanning")
+        if self.prompt_attack and not self.input_filtering:
+            raise ValueError("Prompt protection requires input scanning")
+        if self.profile != "Custom":
+            threshold = 4 if self.profile == "Standard" else 1
+            if (
+                any(value != threshold for value in (self.hate, self.violence, self.sexual, self.self_harm))
+                or not all((
+                    self.prompt_attack, self.protected_material, self.input_filtering, self.output_filtering,
+                ))
+            ):
+                raise ValueError("Preset values must match the selected safety profile")
+        return self
+
+
+class TeamGatewayLimits(Input):
+    organization_id: UUID
+    team_id: UUID
+    limits: GatewayLimits
+
+
+class SubscriptionGatewayLimits(Input):
+    organization_id: UUID
+    subscription_id: UUID
+    limits: GatewayLimits
+
+
+class ManagedGatewayConfiguration(Input):
+    schema_version: Literal[2]
+    defaults: GatewayLimits
+    teams: list[TeamGatewayLimits] = Field(default_factory=list, max_length=100)
+    subscriptions: list[SubscriptionGatewayLimits] = Field(default_factory=list, max_length=200)
+    safety: SafetyConfiguration
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def integer_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("Schema version must be the integer 2")
+        return value
+
+
+class SafetySettingsUpdate(Input):
+    expected_version: int = Field(strict=True, ge=1)
+    configuration: SafetyConfiguration
+    reason: str = Field(min_length=1, max_length=500)
+    acknowledge_relaxation: bool = Field(default=False, strict=True)
+
+
 class GatewaySettingsUpdate(Input):
     expected_version: int = Field(strict=True, ge=0)
-    configuration: GatewayConfiguration
+    configuration: GatewayConfiguration | ManagedGatewayConfiguration
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -100,12 +184,22 @@ class GatewaySettingsRetry(Input):
 
 class GatewayRevisionOutput(BaseModel):
     version: int
-    configuration: GatewayConfiguration
+    configuration: GatewayConfiguration | ManagedGatewayConfiguration
     reason: str
     object_id: str
     occurred_at: datetime
     state: Literal["pending", "published", "failed"]
     error: str | None
+
+
+class GatewayCapabilities(BaseModel):
+    managed_controls_enabled: bool = False
+    concurrency_tiers: list[int] = [1, 2, 4, 8, 16]
+    protected_material_available: bool = False
+    safety_relaxation_allowed: bool = False
+    monthly_request_quota_available: bool = False
+    enforcement_enabled: bool = False
+    initial_safety_threshold: int = 1
 
 
 class GatewaySettingsOutput(BaseModel):
@@ -115,6 +209,17 @@ class GatewaySettingsOutput(BaseModel):
     version: int
     published_version: int | None
     desired: GatewayRevisionOutput | None
+    capabilities: GatewayCapabilities = Field(default_factory=GatewayCapabilities)
+
+
+class GatewayTarget(BaseModel):
+    organization_id: str
+    organization_name: str
+    team_id: str
+    team: str
+    subscription_id: str
+    name: str
+    state: str
 
 
 T = TypeVar("T")
@@ -148,6 +253,14 @@ class SubscriptionOutput(BaseModel):
     team: str
     state: Literal["pending", "active", "suspended", "failed"]
     created_at: datetime
+
+
+class AdminSubscriptionOutput(SubscriptionOutput):
+    organization_id: str
+    organization_name: str
+    team_id: str | None
+    gateway_access: Literal["ready", "pending", "not_managed"]
+    gateway_message: str | None = None
 
 
 class OrganizationOutput(BaseModel):
@@ -223,6 +336,22 @@ class UsageSeries(BaseModel):
     start: datetime
     end: datetime
     interval_seconds: int = 60
+
+
+class ModelTokenBucket(BaseModel):
+    start: datetime
+    end: datetime
+    model: str
+    requests: int
+    total_tokens: int | None
+    missing_token_requests: int
+
+
+class ModelTokenSeries(BaseModel):
+    items: list[ModelTokenBucket]
+    start: datetime
+    end: datetime
+    interval_seconds: int
 
 
 class SafetyOutput(BaseModel):

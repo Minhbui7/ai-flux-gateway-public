@@ -1,0 +1,10 @@
+ARG API_IMAGE
+FROM ${API_IMAGE}
+WORKDIR /app
+LABEL com.azure.containerizationassist.createdby="containerization-assist"
+COPY scripts/deployment ./scripts/deployment
+COPY infra/sql/bootstrap-identities.sql ./infra/sql/bootstrap-identities.sql
+USER 10001
+# One-shot migration job: completion/exit status replaces an HTTP health probe.
+HEALTHCHECK NONE
+ENTRYPOINT ["python", "-m", "scripts.deployment.sql_init"]

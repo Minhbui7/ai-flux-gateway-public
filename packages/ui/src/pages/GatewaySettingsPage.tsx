@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../client";
 import { AsyncView, ErrorState, Field, PageHeader, Pager, fmtDate, useAsync } from "../components/ui";
 import { useSession } from "../session";
+import { legacyOf } from "../managed";
 import type { GatewayConfiguration, GatewaySettings, QuotaPeriod } from "../types";
+import { ManagedGatewayForm } from "./ManagedGatewayForm";
 
 const periods: QuotaPeriod[] = ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"];
 type Draft = Record<keyof GatewayConfiguration, string>;
@@ -30,7 +32,7 @@ export function validateGatewaySettings(draft: Draft, maxTpm: number): GatewayCo
 
 function SettingsForm({ row, refresh }: { row: GatewaySettings; refresh: () => void }) {
   const { api } = useSession();
-  const [draft, setDraft] = useState(() => draftOf(row.desired?.configuration));
+  const [draft, setDraft] = useState(() => draftOf(legacyOf(row.desired?.configuration)));
   const [expectedVersion, setExpectedVersion] = useState(row.version);
   const [reason, setReason] = useState("");
   const [approved, setApproved] = useState(false);
@@ -88,15 +90,16 @@ function SettingsForm({ row, refresh }: { row: GatewaySettings; refresh: () => v
 
   return (
     <section className="panel" aria-label={`${row.scope} settings`}>
-      <h2>{row.scope === "dev-openai" ? "Guarded OpenAI API (/dev/v1)" : "Guarded adapter (/dev/llm/v1)"}</h2>
+      <h2>{row.scope === "dev-openai" ? "API interface (/dev/v1)" : "Chatbot interface (/dev/llm/v1)"}</h2>
       <p>API-wide settings, with separate counters per API, subscription and model. Completion ceilings remain operator-managed.</p>
       <p role="status">Desired revision: {row.version || "Unconfigured"}; last published revision: {row.published_version ?? "None"}; status: {row.desired?.state ?? "unconfigured"}.</p>
       <p className="notice">Published means APIM management-plane readback matched, not that every gateway has applied it. Propagation is eventual; old settings can remain effective during a change.</p>
       {row.desired?.error && <ErrorState message={row.desired.error} />}
       {error && <ErrorState message={error} />}
       {conflict && <p role="alert">The server revision changed. Your edits are preserved. Reload desired settings or choose a historical configuration before publishing.</p>}
-      <button className="btn" disabled={busy} onClick={() => load(row.desired?.configuration)}>Reload desired settings</button>
+      <button className="btn" disabled={busy} onClick={() => load(legacyOf(row.desired?.configuration))}>Reload desired settings</button>
       {row.desired && <button className="btn" disabled={busy} onClick={() => void reconcile()}>{pending ? "Retry publication" : "Check APIM / reconcile"}</button>}
+      <p className="notice">Managed controls are not enabled: concurrency limits, per-team and per-subscription limits, monthly request quotas and protected material detection are unavailable and are not configured by this form.</p>
       <form className="grid-form" onSubmit={(e) => void save(e)}>
         <Field label="Safety threshold (0-7)" hint="One threshold for Hate, SelfHarm, Sexual and Violence at all three inspection passes. Higher is more permissive; 0 blocks every severity, not off.">{(id, d) => <input id={id} aria-describedby={d} type="number" min={0} max={7} step={1} required value={draft.safety_threshold} onChange={change("safety_threshold")} />}</Field>
         <Field label="Requests per minute (RPM)" hint={`Whole number from 1 to ${row.max_rpm}.`}>{(id, d) => <input id={id} aria-describedby={d} type="number" min={1} max={row.max_rpm} step={1} required value={draft.rpm} onChange={change("rpm")} />}</Field>
@@ -113,7 +116,7 @@ function SettingsForm({ row, refresh }: { row: GatewaySettings; refresh: () => v
         {(data) => <>
           <ul>{data.items.map((revision) => <li key={revision.version}>
             Revision {revision.version}: {revision.state}, {fmtDate(revision.occurred_at)}. Actor: <code>{revision.object_id}</code>. Reason: {revision.reason}.
-            <button className="btn" disabled={busy || pending} onClick={() => load(revision.configuration)}>Use revision {revision.version} values</button>
+            <button className="btn" disabled={busy || pending} onClick={() => load(legacyOf(revision.configuration))}>Use revision {revision.version} values</button>
           </li>)}</ul>
           <Pager offset={offset} limit={10} total={data.total} onChange={setOffset} />
         </>}
@@ -133,11 +136,26 @@ export function GatewaySettingsPage() {
   }, [state.data]);
   const rows = state.data?.items ?? previous;
   return <>
-    <PageHeader title="Gateway settings" subtitle="IDS administrator configuration for the guarded development APIs. This does not enable production inference or bypass inspection." />
-    <button className="btn" onClick={refresh}>Refresh publication status</button>
+    <PageHeader title="Gateway settings" subtitle="Configure request limits by team or API key." actions={<button className="btn" onClick={refresh}>Refresh publication status</button>} />
     {state.error && rows !== undefined && <ErrorState message={state.error} onRetry={refresh} />}
     <AsyncView state={{ ...state, data: rows, error: rows === undefined ? state.error : undefined }} isEmpty={(data) => data.length === 0} emptyTitle="Admin settings are not enabled" emptyHint="An operator must opt in through Terraform. Existing code-managed settings remain unchanged.">
-      {(data) => data.map((row) => <SettingsForm key={row.scope} row={row} refresh={refresh} />)}
+      {(data) => {
+        const managed = data.filter((row) => row.capabilities?.managed_controls_enabled);
+        const shared = managed.find((row) => row.scope === "dev-openai") ?? managed[0];
+        return <>
+          {shared && <>
+            <div className="gateway-interfaces" aria-label="Configured interfaces">
+              {managed.map((row) => <section className="panel" key={row.scope}>
+                <h2>{row.scope === "dev-openai" ? "API interface (/dev/v1)" : "Chatbot interface (/dev/llm/v1)"}</h2>
+              </section>)}
+            </div>
+            <p className="muted">Settings below apply to {managed.length > 1 ? "both interfaces" : "this interface"}.</p>
+            <ManagedGatewayForm key={shared.scope} row={shared} refresh={refresh} />
+          </>}
+          {data.filter((row) => !row.capabilities?.managed_controls_enabled).map((row) =>
+            <SettingsForm key={row.scope} row={row} refresh={refresh} />)}
+        </>;
+      }}
     </AsyncView>
   </>;
 }

@@ -2,42 +2,42 @@ mock_provider "azurerm" {
   override_during = plan
   mock_data "azurerm_resource_group" {
     defaults = {
-      id       = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev"
+      id       = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev"
       location = "eastus"
     }
   }
   mock_data "azurerm_client_config" {
     defaults = {
-      subscription_id = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+      subscription_id = "00000000-0000-0000-0000-000000000000"
       tenant_id       = "00000000-0000-0000-0000-000000000001"
     }
   }
   mock_data "azurerm_network_security_group" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.Network/networkSecurityGroups/policy-attached-nsg"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.Network/networkSecurityGroups/policy-attached-nsg"
     }
   }
   mock_resource "azurerm_api_management" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.ApiManagement/service/aiflux-test-apim"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.ApiManagement/service/aiflux-test-apim"
     }
   }
   mock_resource "azurerm_user_assigned_identity" {
     defaults = {
-      id           = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"
+      id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"
       client_id    = "00000000-0000-0000-0000-000000000002"
       principal_id = "00000000-0000-0000-0000-000000000003"
     }
   }
   mock_resource "azurerm_application_insights" {
     defaults = {
-      id                = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.Insights/components/test"
+      id                = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.Insights/components/test"
       connection_string = "InstrumentationKey=00000000-0000-0000-0000-000000000004"
     }
   }
   mock_resource "azurerm_public_ip" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.Network/publicIPAddresses/test"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.Network/publicIPAddresses/test"
     }
   }
   mock_resource "azurerm_linux_web_app" {
@@ -52,43 +52,23 @@ mock_provider "azurerm" {
   }
   mock_resource "azurerm_subnet" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.Network/virtualNetworks/test/subnets/appgw"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.Network/virtualNetworks/test/subnets/appgw"
     }
   }
 }
 
 mock_provider "azapi" {}
 
-run "southeastasia_keeps_primary_foundry_in_eastus" {
-  command = plan
-  variables {
-    deployment_stage                = "prerequisites"
-    public_edge_live_gates_approved = false
-    location                        = "southeastasia"
-    model_location                  = "eastus"
-    sql_location                    = "southeastasia"
-  }
-  assert {
-    condition     = azapi_resource.ai["language"].location == "eastus" && azapi_resource.ai["safety"].location == "southeastasia"
-    error_message = "Gateway region must not move the pinned primary Foundry account."
-  }
-  assert {
-    condition     = azurerm_api_management.main.location == "southeastasia" && azurerm_mssql_server.main[0].location == "southeastasia"
-    error_message = "APIM and explicitly selected SQL must use Southeast Asia."
-  }
-}
-
 variables {
-  subscription_id                 = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
-  resource_group_name             = "rg-aiflux-fdpo-dev"
+  subscription_id                 = "00000000-0000-0000-0000-000000000000"
+  resource_group_name             = "rg-aiflux-example-dev"
   location                        = "eastus"
   name_prefix                     = "aiflux-test"
   deployment_approved             = true
-  manual_rbac_verified            = true
   deployment_stage                = "public-edge"
   public_edge_live_gates_approved = true
   publisher_email                 = "test@example.invalid"
-  gateway_origin_hostname         = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
+  gateway_origin_hostname         = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
   apim_capacity                   = 1
   app_service_sku                 = "P1v3"
   sql_sku                         = "S0"
@@ -99,7 +79,7 @@ variables {
     function = "203.0.113.22"
   }
   log_retention_days   = 30
-  registry_resource_id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.ContainerRegistry/registries/test"
+  registry_resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.ContainerRegistry/registries/test"
   entra = {
     audience            = "api://test"
     client_id           = "00000000-0000-0000-0000-000000000005"
@@ -116,10 +96,10 @@ variables {
     app_gateway_subnet = "10.50.0.0/24"
   }
   edge = {
-    origin_hostname             = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
-    dns_label                   = "aiflux-gateway-dev"
+    origin_hostname             = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
+    dns_label                   = "aiflux-example-gateway-dev"
     certificate_secret_id       = "https://test.vault.azure.net/secrets/appgw/"
-    certificate_vault_id        = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.KeyVault/vaults/test"
+    certificate_vault_id        = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.KeyVault/vaults/test"
     app_gateway_timeout_seconds = 120
     waf_body_limit_kb           = 128
     waf_inspection_limit_kb     = 128
@@ -138,8 +118,8 @@ run "edge_bootstrap_needs_no_certificate_or_live_attestation" {
     deployment_stage                = "edge-bootstrap"
     public_edge_live_gates_approved = false
     edge = {
-      origin_hostname             = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
-      dns_label                   = "aiflux-gateway-dev"
+      origin_hostname             = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
+      dns_label                   = "aiflux-example-gateway-dev"
       app_gateway_timeout_seconds = 120
       waf_body_limit_kb           = 128
       waf_inspection_limit_kb     = 128
@@ -151,7 +131,7 @@ run "edge_bootstrap_needs_no_certificate_or_live_attestation" {
     error_message = "Bootstrap must not require or invent a TLS certificate."
   }
   assert {
-    condition     = alltrue([for path in azurerm_application_gateway.main["public"].url_path_map : path.default_backend_address_pool_name == "deny"]) && toset(keys(local.appgw_backends)) == toset(["api", "deny"])
+    condition     = alltrue([for path in azurerm_application_gateway.main["public"].url_path_map : path.default_backend_address_pool_name == "deny"]) && toset(keys(local.appgw_backends)) == toset(["api", "deny"]) && length(azurerm_role_assignment.edge_certificate) == 0
     error_message = "Bootstrap permits only HTTP-01, has no portal/APIM backend, and grants no certificate read role."
   }
   assert {
@@ -171,8 +151,13 @@ run "edge_candidate_is_operator_restricted_without_live_attestation" {
     error_message = "Candidate TLS can be tested before release, but its WAF operator gate must remain and gateway URL must not be released."
   }
   assert {
-    condition     = azurerm_user_assigned_identity.identity["edge"].name == "${var.name_prefix}-edge-identity" && var.manual_rbac_verified
-    error_message = "Candidate edge needs its user-assigned identity and verified manual vault access before rollout."
+    condition = azurerm_role_assignment.edge_certificate["edge"].scope == (
+      var.edge.certificate_vault_id
+      ) && azurerm_role_assignment.edge_certificate["edge"].role_definition_name == "Key Vault Secrets User" && (
+      azurerm_role_assignment.edge_certificate["edge"].principal_id ==
+      azurerm_user_assigned_identity.identity["edge"].principal_id
+    )
+    error_message = "Application Gateway needs read-only secret access scoped to its Key Vault; the API writer remains limited to the exact TLS secret."
   }
 }
 
@@ -193,10 +178,10 @@ run "reject_timeout_above_appgw_v2_limit" {
   command = plan
   variables {
     edge = {
-      origin_hostname             = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
-      dns_label                   = "aiflux-gateway-dev"
+      origin_hostname             = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
+      dns_label                   = "aiflux-example-gateway-dev"
       certificate_secret_id       = "https://test.vault.azure.net/secrets/appgw"
-      certificate_vault_id        = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.KeyVault/vaults/test"
+      certificate_vault_id        = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.KeyVault/vaults/test"
       app_gateway_timeout_seconds = 241
       waf_body_limit_kb           = 128
       waf_inspection_limit_kb     = 128
@@ -225,8 +210,8 @@ run "apim_first_stage" {
     error_message = "APIM/protection must not require operator bootstrap, VM, NAT, or networking."
   }
   assert {
-    condition     = azapi_resource.ai["language"].body.kind == "AIServices" && azapi_resource.ai["language"].name == "${var.name_prefix}-foundry" && azurerm_user_assigned_identity.identity["gateway"].name == "${var.name_prefix}-gateway-identity"
-    error_message = "Language PII must use the Foundry umbrella resource; the gateway identity awaits manual resource-scoped RBAC."
+    condition     = azapi_resource.ai["language"].body.kind == "AIServices" && azapi_resource.ai["language"].name == "${var.name_prefix}-foundry" && azurerm_role_assignment.ai_user["language"].role_definition_name == "Cognitive Services User"
+    error_message = "Language PII must use the Foundry umbrella resource with a resource-scoped gateway identity role."
   }
   assert {
     condition     = length(azurerm_linux_web_app.main) == 0 && length(azurerm_mssql_server.main) == 0 && length(azurerm_linux_function_app.ingestion) == 0 && length(azurerm_application_gateway.main) == 0
@@ -285,7 +270,6 @@ run "independent_platform_prerequisites" {
   command = plan
   variables {
     deployment_stage                        = "prerequisites"
-    manual_rbac_verified                    = false
     entra                                   = null
     apps                                    = {}
     protection_language_enabled             = false
@@ -302,8 +286,8 @@ run "independent_platform_prerequisites" {
     error_message = "Blocked identity/artifact prerequisites must not create falsely configured runtime apps or release routes."
   }
   assert {
-    condition     = length(azurerm_user_assigned_identity.identity) == 5 && !var.manual_rbac_verified
-    error_message = "Prerequisites create identities without claiming manual role assignments are complete."
+    condition     = length(azurerm_role_assignment.acr_pull) == 3 && length(azurerm_role_assignment.function_storage) == 3 && length(azurerm_role_assignment.monitor_reader) == 2 && length(azurerm_role_assignment.subscription_manager) == 1
+    error_message = "Prerequisites must prepare resource-scoped managed identity roles without directory-wide permission or an enabled runtime."
   }
   assert {
     condition     = azurerm_mssql_server.main[0].location == coalesce(var.sql_location, var.location)
@@ -616,7 +600,7 @@ run "approved_adapter_token_limits" {
 run "admin_settings_are_opt_in" {
   command = plan
   assert {
-    condition     = !var.dev_admin_settings_enabled && length(azapi_resource.gateway_settings) == 0
+    condition     = !var.dev_admin_settings_enabled && length(azapi_resource.gateway_settings) == 0 && length(azurerm_role_assignment.gateway_settings) == 0
     error_message = "Existing deployments must retain code-managed settings with no new runtime fragment permissions."
   }
   assert {
@@ -646,8 +630,8 @@ run "admin_settings_keep_invariant_policy_owned_by_terraform" {
     error_message = "Opt-in must bootstrap a single denied settings snapshot, not guess safety or quota values."
   }
   assert {
-    condition     = var.manual_rbac_verified && azurerm_user_assigned_identity.identity["api"].name == "${var.name_prefix}-api-identity"
-    error_message = "Runtime settings require an API identity and manually verified narrow fragment permissions."
+    condition     = toset(azurerm_role_definition.gateway_settings[0].permissions[0].actions) == toset(["Microsoft.ApiManagement/service/policyFragments/read", "Microsoft.ApiManagement/service/policyFragments/write"])
+    error_message = "Runtime settings must not grant API policy, backend or service write permissions."
   }
 }
 
@@ -706,16 +690,193 @@ run "ingestion_immutable_container_configuration" {
     error_message = "Function image configuration must reconstruct exactly one sha256 digest separator."
   }
   assert {
-    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].container_registry_use_managed_identity && var.manual_rbac_verified
-    error_message = "Function registry access requires a verified manual AcrPull grant, not publishing credentials."
+    condition     = azurerm_linux_function_app.ingestion[0].site_config[0].container_registry_use_managed_identity && azurerm_role_assignment.acr_pull["ingestion"].role_definition_name == "AcrPull"
+    error_message = "Function registry access must use scoped managed identity, not publishing credentials."
   }
 }
 
-run "runtime_requires_verified_manual_rbac" {
+run "budget_and_always_on_legacy_defaults" {
+  command = plan
+  assert {
+    condition     = length(azurerm_consumption_budget_resource_group.main) == 0 && alltrue([for app in values(azurerm_linux_web_app.main) : app.site_config[0].always_on])
+    error_message = "Omitting new options must not create a budget or change legacy Always On settings."
+  }
+}
+
+run "per_app_always_on_is_explicit" {
   command = plan
   variables {
-    deployment_stage     = "platform"
-    manual_rbac_verified = false
+    apps = {
+      api      = { image = "test/api@sha256:0000000000000000000000000000000000000000000000000000000000000000", registry_url = "https://test.azurecr.io", port = 8000, health_path = "/health" }
+      customer = { image = "test/customer@sha256:0000000000000000000000000000000000000000000000000000000000000000", registry_url = "https://test.azurecr.io", port = 8080, health_path = "/healthz", always_on = false }
+      admin    = { image = "test/admin@sha256:0000000000000000000000000000000000000000000000000000000000000000", registry_url = "https://test.azurecr.io", port = 8080, health_path = "/healthz", always_on = false }
+    }
   }
-  expect_failures = [terraform_data.approval]
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].site_config[0].always_on && !azurerm_linux_web_app.main["customer"].site_config[0].always_on && !azurerm_linux_web_app.main["admin"].site_config[0].always_on && azurerm_linux_function_app.ingestion[0].site_config[0].always_on
+    error_message = "Reviewed portal Always On overrides must not disable API or ingestion Always On."
+  }
+}
+
+run "monthly_budget_has_exact_scope_and_actual_alerts" {
+  command = plan
+  variables {
+    monthly_budget = {
+      name           = "pilot-monthly"
+      amount         = 1000
+      start_date     = "2026-10-01T00:00:00Z"
+      end_date       = "2027-10-01T00:00:00Z"
+      contact_emails = ["operator@example.com"]
+    }
+  }
+  assert {
+    condition     = azurerm_consumption_budget_resource_group.main["main"].amount == 1000 && azurerm_consumption_budget_resource_group.main["main"].time_grain == "Monthly" && azurerm_consumption_budget_resource_group.main["main"].resource_group_id == data.azurerm_resource_group.existing.id
+    error_message = "Budget must retain the reviewed amount, monthly period and exact existing resource-group scope."
+  }
+  assert {
+    condition     = toset([for alert in azurerm_consumption_budget_resource_group.main["main"].notification : alert.threshold]) == toset([50, 80, 100]) && alltrue([for alert in azurerm_consumption_budget_resource_group.main["main"].notification : alert.enabled && alert.threshold_type == "Actual" && alert.operator == "GreaterThanOrEqualTo" && alert.contact_emails == tolist(["operator@example.com"])])
+    error_message = "Budget must notify approved contacts at exactly 50/80/100 percent actual cost; it is not a hard cap."
+  }
+  assert {
+    condition     = azurerm_consumption_budget_resource_group.main["main"].time_period[0].start_date == "2026-10-01T00:00:00Z" && azurerm_consumption_budget_resource_group.main["main"].time_period[0].end_date == "2027-10-01T00:00:00Z"
+    error_message = "Budget dates must be explicit and stable, not reset on each plan."
+  }
+}
+
+run "reject_invalid_monthly_budget" {
+  command = plan
+  variables {
+    monthly_budget = {
+      name           = "pilot-monthly"
+      amount         = -1
+      start_date     = "2026-10-01T00:00:00Z"
+      end_date       = "2027-10-01T00:00:00Z"
+      contact_emails = ["operator@example.com"]
+    }
+  }
+  expect_failures = [var.monthly_budget]
+}
+
+run "reject_reversed_budget_dates" {
+  command = plan
+  variables {
+    monthly_budget = {
+      name           = "pilot-monthly"
+      amount         = 1000
+      start_date     = "2026-10-01T00:00:00Z"
+      end_date       = "2025-10-01T00:00:00Z"
+      contact_emails = ["operator@example.com"]
+    }
+  }
+  expect_failures = [var.monthly_budget]
+}
+
+run "reject_nonmonthly_budget_start" {
+  command = plan
+  variables {
+    monthly_budget = {
+      name           = "pilot-monthly"
+      amount         = 1000
+      start_date     = "2026-10-02T00:00:00Z"
+      end_date       = "2027-10-01T00:00:00Z"
+      contact_emails = ["operator@example.com"]
+    }
+  }
+  expect_failures = [var.monthly_budget]
+}
+
+run "reject_budget_without_contacts" {
+  command = plan
+  variables {
+    monthly_budget = {
+      name           = "pilot-monthly"
+      amount         = 1000
+      start_date     = "2026-10-01T00:00:00Z"
+      end_date       = "2027-10-01T00:00:00Z"
+      contact_emails = []
+    }
+  }
+  expect_failures = [var.monthly_budget]
+}
+
+run "v2_requires_provisioned_or_enabled_settings" {
+  command = plan
+  variables {
+    dev_gateway_controls_v2_enabled = true
+  }
+  expect_failures = [var.dev_gateway_controls_v2_enabled]
+}
+
+run "provisioned_settings_create_scopes_without_enforcement" {
+  command = plan
+  variables {
+    dev_admin_settings_provisioned = true
+  }
+  assert {
+    condition     = length(azapi_resource.gateway_settings) > 0 && length(azapi_resource.gateway_forward) == 0
+    error_message = "Provisioned-only mode must create runtime fragments without v2 forwarding fragments."
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_ENFORCEMENT_ENABLED"] == "false" && azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_CONTROLS_V2_ENABLED"] == "false"
+    error_message = "Provisioning must not enable enforcement or v2 controls."
+  }
+}
+
+run "feature_flags_default_off_and_max_rpm_is_two" {
+  command = plan
+  assert {
+    condition     = local.gateway_policy_vars.safety_relaxation_allowed == false && local.gateway_policy_vars.input_filter_expr == "true" && local.gateway_policy_vars.output_filter_expr == "true" && local.gateway_policy_vars.prompt_shield == "true"
+    error_message = "The invariant policy must receive a disabled relaxation flag; legacy scans and shielding stay mandatory."
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_INITIAL_SAFETY_THRESHOLD"] == "1"
+    error_message = "Disabled nullable safety settings must initialize v2 with a non-null strict threshold."
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_PROTECTED_MATERIAL_AVAILABLE"] == "false" && azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_MONTHLY_REQUEST_QUOTA_AVAILABLE"] == "false" && azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_SAFETY_RELAXATION_ALLOWED"] == "false" && azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_MAX_RPM"] == "2"
+    error_message = "New gateway capability flags must default off."
+  }
+
+}
+
+run "initial_safety_preserves_operator_threshold_zero" {
+  command = plan
+  variables {
+    dev_openai_content_safety_threshold = 0
+  }
+  assert {
+    condition     = azurerm_linux_web_app.main["api"].app_settings["AIFLUX_GATEWAY_INITIAL_SAFETY_THRESHOLD"] == "0"
+    error_message = "An explicit operator safety threshold must not be replaced by the initialization default."
+  }
+}
+
+run "managed_safety_floor_cannot_be_relaxed_by_stale_fragment" {
+  command         = plan
+  expect_failures = [terraform_data.dev_openai_gate[0]]
+  variables {
+    dev_openai_inference_enabled        = true
+    dev_admin_settings_enabled          = true
+    dev_gateway_controls_v2_enabled     = true
+    dev_openai_content_safety_threshold = 1
+  }
+  assert {
+    condition     = local.gateway_policy_vars.safety_relaxation_allowed == false && strcontains(local.gateway_policy_vars.input_filter_expr, "aiflux-input-filtering") && strcontains(local.gateway_policy_vars.output_filter_expr, "aiflux-output-filtering") && strcontains(local.gateway_policy_vars.prompt_shield, "aiflux-prompt-attack")
+    error_message = "Managed runtime toggles must remain subordinate to the Terraform-owned false relaxation flag."
+  }
+}
+
+run "operator_can_explicitly_allow_managed_safety_toggles" {
+  command         = plan
+  expect_failures = [terraform_data.dev_openai_gate[0]]
+  variables {
+    dev_openai_inference_enabled        = true
+    dev_admin_settings_enabled          = true
+    dev_gateway_controls_v2_enabled     = true
+    dev_safety_relaxation_allowed       = true
+    dev_openai_content_safety_threshold = 1
+  }
+  assert {
+    condition     = local.gateway_policy_vars.safety_relaxation_allowed == true && strcontains(local.gateway_policy_vars.prompt_shield, "aiflux-prompt-attack")
+    error_message = "Explicit operator approval must allow managed toggles."
+  }
 }

@@ -16,10 +16,10 @@ environment example keeps `deployment_approved=false`. A machine is **not** an o
 GitHub runner: Azure CLI, Terraform, runner binaries, registration and live acceptance
 remain separate operator work.
 
-The root pins Terraform `1.12.1` and AzureRM `5.9.0`; the main/state roots additionally
-pin AzAPI `2.13.0`. Local checks use Terraform `1.12.1` and mock all Azure providers.
-The existing RG `rg-aiflux-fdpo-dev` in subscription
-`4d75ed7f-75ab-4db6-b1f3-263f240d1450` is a data source, not managed/imported/deleted.
+The root pins Terraform `~>1.16.0` and AzureRM `5.9.0`; the main/state roots additionally
+pin AzAPI `2.13.0`. Local checks use Terraform `1.16.5` and mock all Azure providers.
+The existing RG `rg-aiflux-example-dev` in subscription
+`00000000-0000-0000-0000-000000000000` is a data source, not managed/imported/deleted.
 The former design assumed Standard v2/private APIM and private apps; that is not
 what the active Basic v2 public root deploys. This bootstrap does not add Front Door.
 
@@ -32,7 +32,7 @@ environment-federated deployment identity. It does not create private state stor
 
 | Address | Purpose | Owner |
 | --- | --- | --- |
-| `10.240.0.0/16` | `aiflux-fdpo-dev-vnet` | operator root |
+| `10.240.0.0/16` | `aiflux-example-dev-vnet` | operator root |
 | `10.240.1.0/24` | App Gateway, reserved during APIM stage | operator root |
 | `10.240.2.0/24` | APIM Standard v2 integration; `Microsoft.Web/serverFarms` delegation | operator root |
 | `10.240.3.0/24` | State and service private endpoints; endpoint policies disabled | operator root |
@@ -62,7 +62,7 @@ After separately approved bootstrap:
    blob data access. Securely transfer both local states to that host. Only there,
    migrate operator and storage-bootstrap state to **different blob keys**;
    `aiflux-operator.tfstate`, `aiflux-state-bootstrap.tfstate`, and
-   `aiflux-fdpo-dev.tfstate` for the gateway are separate suggested keys. Never expose
+   `aiflux-example-dev.tfstate` for the gateway are separate suggested keys. Never expose
    state publicly, copy state into Run Command payloads, or force-unlock an active lease.
 5. Stop before gateway deployment: the active public root no longer accepts
    `operator_network` or shares private DNS. A future private gateway root and explicit
@@ -100,7 +100,7 @@ Two identities have deliberately different purposes:
   Untrusted jobs can reach IMDS; attaching a privileged deployment MI to the VM would
   bypass GitHub environment approval.
 - Separate user-assigned deployment identity: exact federation subject
-  `repo:ajanakiraman_microsoft/ai-flux-gateway:environment:aiflux-development`,
+  `repo:REPLACE_WITH_GITHUB_OWNER/REPLACE_WITH_REPOSITORY:environment:aiflux-development`,
   issuer `https://token.actions.githubusercontent.com`, audience
   `api://AzureADTokenExchange`. Contributor and Role Based Access Control Administrator
   are scoped only to the existing dev RG. No subscription/Graph roles or app registration
@@ -149,14 +149,14 @@ This is an operator example, **not executed by this change**:
 
 ```powershell
 az vm run-command invoke `
-  --subscription 4d75ed7f-75ab-4db6-b1f3-263f240d1450 `
-  --resource-group rg-aiflux-fdpo-dev --name aiflux-fdpo-dev-runner `
+  --subscription 00000000-0000-0000-0000-000000000000 `
+  --resource-group rg-aiflux-example-dev --name aiflux-example-dev-runner `
   --command-id RunShellScript --scripts "@infra\operator\check-machine.sh"
 ```
 
 Check agent readiness/cloud-init status before retrying; do not open SSH to repair
 egress. Install Azure CLI from Microsoft's signed package repository, Terraform
-`1.12.1` from checksum/signature-verified HashiCorp packages, and an explicitly selected
+`1.16.5` from checksum/signature-verified HashiCorp packages, and an explicitly selected
 GitHub runner Linux x64 release using its published SHA-256. Recheck disk capacity and
 Docker builds: B2s is burstable and a 32 GiB disk can be insufficient for image caches.
 Run the runner as `runner`, not root; do not install unrelated toolchains by default.
@@ -178,7 +178,7 @@ Registration is a **later manual secure action**:
    verify configuration/agent logs do not retain it. Standard runner `.credentials`
    files are persistent credentials and must stay access-controlled on the runner disk;
    no registration token or credential output belongs in Terraform/state.
-4. Register for **only** `ajanakiraman_microsoft/ai-flux-gateway` with labels
+4. Register for **only** `REPLACE_WITH_GITHUB_OWNER/REPLACE_WITH_REPOSITORY` with labels
    `self-hosted,linux,aiflux-private`, configure its service under `runner`, restrict
    scheduling to trusted reviewed workflows and revoke/expire registration material.
    Verify GitHub reports the runner online, then separately test protected-environment

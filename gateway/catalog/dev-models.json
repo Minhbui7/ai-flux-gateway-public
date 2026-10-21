@@ -1,6 +1,30 @@
 {
   "models": [
     {
+      "id": "gpt-5.4-nano",
+      "provider": "OpenAI",
+      "backend_model": "gpt-5.4-nano",
+      "model_version": "2026-03-17",
+      "api_format": "azure-openai-v1",
+      "capabilities": [],
+      "enabled": false,
+      "placeholder": true,
+      "max_completion_tokens": 4096,
+      "backends": []
+    },
+    {
+      "id": "DeepSeek-V4-Flash",
+      "provider": "DeepSeek",
+      "backend_model": "DeepSeek-V4-Flash",
+      "model_version": "2026-04-23",
+      "api_format": "foundry-model-inference",
+      "capabilities": [],
+      "enabled": false,
+      "placeholder": true,
+      "max_completion_tokens": 4096,
+      "backends": []
+    },
+    {
       "id": "gpt-5.6-luna",
       "provider": "OpenAI",
       "backend_model": "gpt-5.6-luna",
@@ -13,7 +37,7 @@
         {
           "id": "dev-gpt-5-6-luna-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -24,7 +48,7 @@
         {
           "id": "dev-gpt-5-6-luna-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry-swc.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -47,7 +71,7 @@
         {
           "id": "dev-gpt-5-6-sol-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -58,7 +82,7 @@
         {
           "id": "dev-gpt-5-6-sol-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry-swc.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -81,7 +105,7 @@
         {
           "id": "dev-claude-haiku-5-5-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/anthropic/v1",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/anthropic/v1",
           "api_format": "anthropic-messages",
           "priority": 1,
           "weight": 1,
@@ -107,7 +131,7 @@
         {
           "id": "dev-gpt-6-astra-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -120,7 +144,7 @@
         {
           "id": "dev-gpt-6-astra-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry-swc.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -148,7 +172,7 @@
         {
           "id": "dev-gpt-6-luna-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -161,7 +185,7 @@
         {
           "id": "dev-gpt-6-luna-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry-swc.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -189,7 +213,7 @@
         {
           "id": "dev-gpt-6-sol-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -202,7 +226,7 @@
         {
           "id": "dev-gpt-6-sol-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.openai.azure.com/openai/v1",
+          "url": "https://aiflux-example-dev-foundry-swc.openai.azure.com/openai/v1",
           "api_format": "openai-chat-completions",
           "priority": 1,
           "weight": 1,
@@ -230,7 +254,7 @@
         {
           "id": "dev-kimi-k2-6-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/models",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/models",
           "api_format": "foundry-openai-compatible",
           "priority": 1,
           "weight": 1,
@@ -259,7 +283,7 @@
         {
           "id": "dev-deepseek-v4-flash-0731-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/models",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/models",
           "api_format": "foundry-openai-compatible",
           "priority": 1,
           "weight": 1,
@@ -272,7 +296,7 @@
         {
           "id": "dev-deepseek-v4-flash-0731-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.services.ai.azure.com/models",
+          "url": "https://aiflux-example-dev-foundry-swc.services.ai.azure.com/models",
           "api_format": "foundry-openai-compatible",
           "priority": 1,
           "weight": 1,
@@ -300,7 +324,7 @@
         {
           "id": "dev-deepseek-v4-pro-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/models",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/models",
           "api_format": "foundry-openai-compatible",
           "priority": 1,
           "weight": 1,
@@ -313,7 +337,7 @@
         {
           "id": "dev-deepseek-v4-pro-swedencentral",
           "region": "swedencentral",
-          "url": "https://aiflux-fdpo-dev-foundry-swc.services.ai.azure.com/models",
+          "url": "https://aiflux-example-dev-foundry-swc.services.ai.azure.com/models",
           "api_format": "foundry-openai-compatible",
           "priority": 1,
           "weight": 1,
@@ -341,7 +365,7 @@
         {
           "id": "dev-claude-sonnet-5-5-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/anthropic/v1",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/anthropic/v1",
           "api_format": "anthropic-messages",
           "priority": 1,
           "weight": 1,
@@ -369,7 +393,7 @@
         {
           "id": "dev-claude-opus-5-5-eastus",
           "region": "eastus",
-          "url": "https://aiflux-fdpo-dev-foundry.services.ai.azure.com/anthropic/v1",
+          "url": "https://aiflux-example-dev-foundry.services.ai.azure.com/anthropic/v1",
           "api_format": "anthropic-messages",
           "priority": 1,
           "weight": 1,

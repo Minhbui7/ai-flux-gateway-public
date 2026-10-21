@@ -1,5 +1,17 @@
 [
   {
+    "model": "gpt-5.4-nano", "provider": "OpenAI", "region": "australiaeast",
+    "effective_from": "2026-10-19T15:20:00Z", "currency": "USD",
+    "input_per_million": "0.20", "output_per_million": "1.25",
+    "cached_input_per_million": "0.02", "input_includes_cached": true
+  },
+  {
+    "model": "DeepSeek-V4-Flash", "provider": "DeepSeek", "region": "australiaeast",
+    "effective_from": "2026-10-19T15:20:00Z", "currency": "USD",
+    "input_per_million": "0.19", "output_per_million": "0.51",
+    "cached_input_per_million": "0.028", "input_includes_cached": true
+  },
+  {
     "model": "gpt-5.6-luna", "provider": "OpenAI", "region": "eastus",
     "effective_from": "2026-10-12T16:30:00Z", "currency": "USD",
     "input_per_million": "0.20", "output_per_million": "1.20",

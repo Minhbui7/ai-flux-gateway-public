@@ -13,7 +13,7 @@ from conftest import CUSTOMER, CUSTOMER_USER, FakeApim
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-TEST_APP_ID = "26f09831-946d-4dd3-874a-9d573ec7e4f4"
+TEST_APP_ID = "00000000-0000-4000-8000-000000000003"
 
 
 def test_mise_telemetry_headers_contain_version_sku_and_client_id():

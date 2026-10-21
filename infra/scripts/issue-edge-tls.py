@@ -2,11 +2,15 @@
 
 import argparse
 import json
-import subprocess
+import sys
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.deployment.launcher import Runner, read_json, write_json  # noqa: E402
 
 
 def main() -> None:
@@ -21,18 +25,17 @@ def main() -> None:
     parser.add_argument("--environment", choices=("staging", "production"), required=True)
     parser.add_argument("--evidence-directory", required=True)
     parser.add_argument("--approve-secret-scoped-temporary-writer", action="store_true", required=True)
+    parser.add_argument("--agree-terms", action="store_true", required=True)
     args = parser.parse_args()
     root = Path(args.evidence_directory)
     root.mkdir(parents=True, exist_ok=True)
 
     def az(*arguments: str) -> object:
-        result = subprocess.run(
-            ["az.cmd", *arguments, "--subscription", args.subscription, "--only-show-errors", "-o", "json"],
-            capture_output=True,
-            text=True,
-            check=True,
+        return Runner()(
+            ["az", *arguments, "--subscription", args.subscription, "--only-show-errors", "-o", "json"],
+            json_output=arguments[:2] != ("webapp", "restart")
+            and arguments[:3] != ("role", "assignment", "delete"),
         )
-        return json.loads(result.stdout) if result.stdout.strip() else None
 
     token = az("account", "get-access-token", "--resource", "https://management.azure.com/")["accessToken"]
     session = requests.Session()
@@ -70,35 +73,40 @@ def main() -> None:
         "secret_scope": secret_scope,
     }
     snapshot_path = root / (args.environment + "-restoration.json")
-    snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    if snapshot_path.exists() and not read_json(snapshot_path).get("restored"):
+        raise RuntimeError("Recover the previous incomplete TLS operation before retrying")
+    run_id = str(uuid4())
+    snapshot["run_id"] = run_id
+    snapshot["app_id"] = app_id
+    write_json(snapshot_path, snapshot)
     startup_changed = False
     script_uploaded = False
-    marker = f"aiflux-tls-{args.environment}.json"
-    script_name = f"aiflux-tls-{args.environment}.py"
+    marker = f"aiflux-tls-{args.environment}-{run_id}.json"
+    script_name = f"aiflux-tls-{args.environment}-{run_id}.py"
+    snapshot["script_name"] = script_name
+    snapshot["marker"] = marker
+    write_json(snapshot_path, snapshot)
 
     def set_startup(command: str) -> None:
         response = session.patch(web, json={"properties": {"appCommandLine": command}}, timeout=90)
         response.raise_for_status()
-        subprocess.run(
-            [
-                "az.cmd", "webapp", "restart", "-g", args.resource_group, "-n", args.api_app,
-                "--subscription", args.subscription, "--only-show-errors",
-            ],
-            check=True,
-            capture_output=True,
-        )
+        az("webapp", "restart", "-g", args.resource_group, "-n", args.api_app)
 
     try:
         if args.environment == "production":
-            role = az(
+            role_name = str(uuid4())
+            snapshot["temporary_role_ids"].append(
+                secret_scope + "/providers/Microsoft.Authorization/roleAssignments/" + role_name
+            )
+            write_json(snapshot_path, snapshot)
+            az(
                 "role", "assignment", "create",
+                "--name", role_name,
                 "--assignee-object-id", args.api_principal,
                 "--assignee-principal-type", "ServicePrincipal",
                 "--role", "Key Vault Secrets Officer",
                 "--scope", secret_scope,
             )
-            snapshot["temporary_role_ids"].append(role["id"])
-            snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
 
         command_args = [
             "--environment", args.environment,
@@ -119,14 +127,14 @@ def main() -> None:
             "from uvicorn import run\n"
             "run('aiflux.app:app',host='0.0.0.0',port=8000,access_log=False)\n"
         )
+        script_uploaded = True
         response = session.put(
             scm + "/api/vfs/" + script_name,
             data=script.encode("utf-8"),
             headers={"If-Match": "*", "Content-Type": "application/octet-stream"},
-            timeout=60,
+            timeout=180,
         )
         response.raise_for_status()
-        script_uploaded = True
         response = session.delete(scm + "/api/vfs/" + marker, headers={"If-Match": "*"}, timeout=30)
         if response.status_code not in (200, 204, 404):
             response.raise_for_status()
@@ -137,12 +145,16 @@ def main() -> None:
         set_startup("/usr/local/bin/python /home/" + script_name)
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
-            response = session.get(scm + "/api/vfs/" + marker, timeout=45)
+            try:
+                response = session.get(scm + "/api/vfs/" + marker, timeout=45)
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                print("Waiting for restarted SCM: " + type(exc).__name__, flush=True)
+                time.sleep(15)
+                continue
             if response.ok:
                 result = response.json()
-                (root / (args.environment + "-certificate.json")).write_text(
-                    json.dumps(result, indent=2), encoding="utf-8",
-                )
+                result["run_id"] = run_id
+                write_json(root / (args.environment + "-certificate.json"), result)
                 print(json.dumps(result), flush=True)
                 expected_status = "validated" if args.environment == "staging" else "issued"
                 if result.get("status") != expected_status:
@@ -177,9 +189,19 @@ def main() -> None:
                 az("role", "assignment", "delete", "--ids", role_id)
             except Exception as exc:
                 restoration_errors.append("role:" + type(exc).__name__)
+        try:
+            response = session.get(web, timeout=60)
+            response.raise_for_status()
+            if response.json()["properties"]["appCommandLine"] != startup:
+                raise RuntimeError("Startup restoration readback mismatch")
+            remaining_roles = az("role", "assignment", "list", "--scope", secret_scope)
+            if any(role["id"] in snapshot["temporary_role_ids"] for role in remaining_roles):
+                raise RuntimeError("Temporary certificate role remains assigned")
+        except Exception as exc:
+            restoration_errors.append("verification:" + type(exc).__name__)
         snapshot["restored"] = not restoration_errors
         snapshot["restoration_errors"] = restoration_errors
-        snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        write_json(snapshot_path, snapshot)
         if restoration_errors:
             raise RuntimeError("Restoration incomplete; inspect protected local evidence")
 

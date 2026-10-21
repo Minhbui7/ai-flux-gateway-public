@@ -6,15 +6,15 @@ import subprocess
 import uuid
 from pathlib import Path
 
-PREFIX = "aiflux-fdpo-dev"
-HOST = "https://aiflux-gateway-dev.eastus.cloudapp.azure.com"
-TENANT = "16b3c013-d300-468d-ac64-7eda0820b6d3"
-BOOTSTRAP = "958ce003-57f5-434f-b107-ca31266a7b08"
+PREFIX = "aiflux-example-dev"
+HOST = "https://aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
+TENANT = "00000000-0000-4000-8000-000000000001"
+BOOTSTRAP = "00000000-0000-4000-8000-000000000002"
 SUBSCRIPTION = None
 
 
 def az(*args):
-    context = ["--subscription", SUBSCRIPTION] if SUBSCRIPTION else []
+    context = ["--subscription", SUBSCRIPTION] if SUBSCRIPTION and args[0] != "ad" else []
     result = subprocess.run(
         ["az.cmd", *args, *context, "--only-show-errors", "-o", "json"],
         capture_output=True,

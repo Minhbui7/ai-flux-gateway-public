@@ -1,5 +1,43 @@
 # AIFLUX portals (customer + IDS admin)
 
+## Subscription administration
+
+IDS admins manage subscriptions at `/admin/subscriptions` across organizations.
+The page lists all organizations' subscriptions; select an enabled organization
+to create a named team subscription. Existing reveal/mask/copy/hide, rotation,
+suspend/activate and reconcile actions remain. Keys are memory-only and cleared
+on organization changes, leaving this page, rotation and sign-out.
+The customer navigation no longer includes Subscriptions; old `/subscriptions`
+bookmarks redirect to `/models`. Customer management APIs also reject writes.
+
+Playground retains organization-scoped subscription selection and automatic key
+retrieval on its Reveal action. Customers can still obtain their own active keys;
+this is not an admin-only-key model. Usage subscription filters are unchanged.
+New subscriptions automatically refresh gateway bindings from published settings
+without changing limits/safety. Provisioning state and gateway access pending
+are displayed separately; explicit errors and Reconcile support recovery.
+Initial Gateway settings still require administrator publication, and unrelated
+pending configuration edits must be reconciled in Gateway settings first.
+
+Admin Gateway and Content safety settings label `/dev/v1` as **API interface**
+and `/dev/llm/v1` as **Chatbot interface**. These are friendly labels, not access
+restrictions: API clients can also use the chatbot-compatible endpoint.
+Managed settings and revisions are shared across both interfaces.
+Gateway settings shows both endpoint labels above one shared editor. RPM,
+concurrency and daily/monthly request quotas appear first; token controls are
+collapsed under **Token limits**. Team/subscription selection and overrides remain
+available. Revision history/recovery and **Important notes** are collapsed at the
+bottom. Publication errors, conflicts and disabled-enforcement warnings remain
+visible; collapsing guidance does not change limits or publication behavior.
+Content safety likewise shows both endpoint labels above one shared safety editor.
+Its profile, thresholds and protection toggles appear first,
+with **Revision history and recovery** and **Important notes** collapsed below
+the form. It uses the canonical API scope when present, or the single available
+scope, for publication and history. Operator-floor and propagation guidance live
+in the notes; blocking
+capability errors, invalid values, conflicts and pending-publication retry remain
+visible. This layout does not change safety values or enforcement.
+
 React/TypeScript (Vite, npm workspaces). Distinct entry points share `packages/ui` (typed control-plane client, SSE/chat client, components).
 
 See the [PRD](prd.md), [technical specification](technical-specification.md) and
@@ -20,6 +58,25 @@ not merged behavior described by this baseline.
 ## Commands
 `npm install`, `npm run typecheck`, `npm test` (vitest), `npm run build`, `npm run e2e`, `npm run dev:customer` (5173) / `dev:admin` (5174/admin/). Set `CONTROL_API_PROXY_TARGET` to proxy `/api` in dev.
 
+## Customer model-token chart
+
+The customer Usage & cost page adds **Token consumption by model** below the
+three existing charts. Each UTC time bar stacks known input-plus-output tokens
+by model, with a model legend, keyboard/hover bucket selection and collapsed
+exact-data table. All models remain visible; no top-model cutoff is applied.
+Period, Subscription, Model and shared zoom/pan/reset controls apply. Transaction
+pagination and CSV retain their existing behavior. Admin showback is unchanged.
+
+The customer-scoped `/api/usage/model-tokens` endpoint aggregates all matching
+records in SQL, not the transaction page. Adaptive buckets (1/5/15 minutes,
+1/6/12 hours, 1/7 days) keep each viewport to at most 120 bars. Bucket totals
+are not per-minute rates. UTC boundary buckets are clipped to the viewport.
+Only records with both input and output counts contribute to known token totals.
+Missing measurements remain unknown, with partial-data notices and per-bucket
+missing-request counts; idle buckets show zero. Failed/throttled requests count
+if telemetry reports token consumption. No migration or ingestion change is needed.
+This view requires the matching control-plane API version before customer rollout.
+
 ## Compile-time public configuration (no secrets)
 | Variable | Value |
 |----------|-------|
@@ -34,7 +91,7 @@ If any required value is missing/invalid the portal renders a "Portal not config
 ## Security model
 - MSAL authorization-code + PKCE via popup, `cacheLocation: memoryStorage` (no token/key in localStorage/sessionStorage; reload requires sign-in). Register SPA redirect URIs `https://<host>/redirect.html` (customer) and `https://<host>/admin/redirect.html` (admin). Do not send `Cross-Origin-Opener-Policy: same-origin` (breaks popup).
 - The development registrations are intentionally single-tenant and use the home tenant GUID authority. This is a DEV-only choice; multi-tenant registration requirements are deferred to the customer environment. Production behavior remains organizational/multi-tenant when the authority is not overridden.
-- The dev bootstrap registers both the future Application Gateway callbacks and the direct App Service callbacks: `https://aiflux-fdpo-dev-customer.azurewebsites.net/redirect.html` and `https://aiflux-fdpo-dev-admin.azurewebsites.net/admin/redirect.html`. Existing SPA callbacks are preserved. MSAL derives its callback from the current origin and portal base path; registering only the gateway hostname causes `AADSTS50011` when signing in on App Service.
+- The dev bootstrap registers both the future Application Gateway callbacks and the direct App Service callbacks: `https://aiflux-example-dev-customer.azurewebsites.net/redirect.html` and `https://aiflux-example-dev-admin.azurewebsites.net/admin/redirect.html`. Existing SPA callbacks are preserved. MSAL derives its callback from the current origin and portal base path; registering only the gateway hostname causes `AADSTS50011` when signing in on App Service.
 - `/api/me` is called before any view; 401/403/404 deny. Role check in the UI (admin portal requires `ids_admin`; customer portal accepts `customer`/`ids_admin`) is a convenience — the backend is the authority. Tenant from the token must equal `tenant_id` from `/api/me`.
 - All control-plane and gateway fetches use `cache: no-store`, `credentials: omit`. CSV export is an authenticated fetch + blob download (no token in URL).
 - The shared customer/admin usage page offers a Model filter for summaries (including p95 and completeness), minute charts, transactions, and CSV. Choices come from authorized historical usage within the selected period and subscription/organization, not the active catalog, selected model, transaction page, or chart viewport. If changing scope removes the selected model, the selector visibly resets to All models with a notice; failed option lookups show an error/retry rather than broadening the filter.
@@ -63,6 +120,21 @@ The customer portal exposes none of these controls. See
 [the canonical bounds, authorization and publication contract](control-plane.md#admin-managed-gateway-settings).
 The workflow has local API/UI/contract coverage; live admin/APIM propagation and
 enforcement acceptance must be performed in an authorized deployment.
+
+With versioned controls provisioned, Gateway settings adds organization/team/
+subscription selection, aggregate team budgets, explicit subscription overrides,
+RPM/concurrency/request quotas and advanced token limits. Primary/secondary keys
+share counters, as do model aliases and the two guarded routes. The page shows
+effective/inherited values, operator maxima, publication state and the warning
+when controls are provisioned but not enforced.
+
+The separate **Content Safety settings** page (`/admin/content-safety`) offers
+Standard/Strict/Custom, four harm thresholds, prompt protection, protected-text
+detection and input/output controls. Safety events stays at `/admin/safety`.
+Locked/unverified capabilities are explained rather than silently skipped.
+Safety changes and gateway changes share the same optimistic version, so edits
+from one page cannot overwrite newer changes from the other. Neither feature is
+activated by deploying a portal alone.
 
 The 2026-10-12 deployment repair supersedes the earlier restrictions/gaps below:
 the explicitly approved direct App Service origins are public, their compiled
@@ -128,7 +200,7 @@ requires validated adapter attribution, ingestion deployment/backfill and pricin
 not merely changing the portal display or turning on the Function.
 
 For future deployments, the user must perform signed-in acceptance, not the agent:
-open `https://aiflux-fdpo-dev-customer.azurewebsites.net`, sign in with the approved
+open `https://aiflux-example-dev-customer.azurewebsites.net`, sign in with the approved
 home-tenant account, create a team subscription, explicitly reveal its key, then
 send a short prompt with `gpt-5.6-luna` and `claude-haiku-5-5` in the playground.
 Report the failing step, HTTP/error code or redacted screenshot if blocked.

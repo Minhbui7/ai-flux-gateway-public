@@ -1,13 +1,13 @@
 locals {
   dev_unified_aliases = concat(
     sort(tolist(local.dev_aliases)),
-    ["claude-haiku-5-5"],
+    local.dev_haiku_aliases,
     sort(tolist(local.dev_accepted_aliases))
   )
 }
 
 data "azapi_resource" "dev_haiku" {
-  count                  = var.dev_unified_inference_enabled ? 1 : 0
+  count                  = var.dev_unified_inference_enabled && !local.australian_pilot ? 1 : 0
   type                   = "Microsoft.CognitiveServices/accounts/deployments@2025-06-01"
   parent_id              = azapi_resource.ai["language"].id
   name                   = "claude-haiku-5-5"
@@ -67,7 +67,7 @@ resource "azurerm_api_management_product_api" "dev_unified" {
 }
 
 resource "azapi_resource" "dev_anthropic_backend" {
-  count     = var.dev_unified_inference_enabled ? 1 : 0
+  count     = var.dev_unified_inference_enabled && !local.australian_pilot ? 1 : 0
   type      = "Microsoft.ApiManagement/service/backends@2024-05-01"
   parent_id = azurerm_api_management.main.id
   name      = "dev-claude-haiku-5-5-eastus"
@@ -95,13 +95,14 @@ resource "azapi_resource" "dev_unified_policy" {
   body = {
     properties = {
       format = "rawxml"
-      value = templatefile("${path.module}/../../gateway/policies/dev-openai.xml.tftpl", {
+      value = templatefile("${path.module}/../../gateway/policies/dev-openai.xml.tftpl", merge(local.gateway_policy_vars, {
         language_endpoint            = trimsuffix(azapi_resource.ai["language"].output.properties.endpoint, "/")
         gateway_identity_client      = azurerm_user_assigned_identity.identity["gateway"].client_id
         tpm_limit                    = var.dev_unified_tpm_limit
         rpm_limit                    = var.dev_openai_rpm_limit
         completion_token_limit       = var.dev_unified_max_completion_tokens
-        safety_threshold             = var.dev_admin_settings_enabled ? "@((int)context.Variables[&quot;aiflux-safety-threshold&quot;])" : tostring(var.dev_openai_content_safety_threshold)
+        safety_threshold             = local.gateway_legacy_threshold
+        forward_tree                 = local.gateway_managed_v2_policy ? templatefile("${path.module}/../../gateway/policies/concurrency-tree.xml.tftpl", { fragment_id = azapi_resource.gateway_forward["dev-unified"].name }) : ""
         admin_settings_enabled       = var.dev_admin_settings_enabled
         settings_fragment_id         = var.dev_admin_settings_enabled ? azapi_resource.gateway_settings["dev-unified"].name : ""
         safety_backend_id            = azapi_resource.dev_content_safety_backend[0].name
@@ -120,10 +121,11 @@ resource "azapi_resource" "dev_unified_policy" {
         anthropic_aliases            = sort(tolist(local.dev_policy_anthropic_aliases))
         anthropic_context_conditions = local.dev_policy_anthropic_context_conditions
         anthropic_backend_ids        = local.dev_policy_anthropic_backend_ids
-      })
+      }))
     }
   }
   depends_on = [
+    azapi_resource.gateway_forward,
     azapi_resource.dev_anthropic_backend,
     azapi_resource.dev_anthropic_model_pool,
     azapi_resource.dev_model_pool,

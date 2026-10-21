@@ -3,6 +3,7 @@ import { ApiError } from "../client";
 import { useSession } from "../session";
 import type { Organization, Paged, UsagePage as UsageData, UsageSeries, UsageSummary } from "../types";
 import { UsageCharts } from "../components/UsageCharts";
+import { ModelTokenChart } from "../components/ModelTokenChart";
 import { AsyncView, Badge, EmptyState, ErrorState, Field, NA, PageHeader, Pager, Table, downloadBlob, fmtDate, fmtInt, fmtSecondsFromMs, useAsync } from "../components/ui";
 
 const LIMIT = 50;
@@ -78,6 +79,14 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
     },
     [api, admin, days, subscriptionId, orgId, selectedModel, viewport.start, viewport.end],
   );
+  const tokenState = useAsync(async () => {
+    if (admin || !modelsReady) return undefined;
+    const data = await api.modelTokens({
+      days, subscription_id: subscriptionId || undefined, model: selectedModel || undefined,
+      start: new Date(viewport.start).toISOString(), end: new Date(viewport.end).toISOString(),
+    });
+    return { key: seriesKey, data };
+  }, [api, admin, modelsReady, days, subscriptionId, selectedModel, viewport.start, viewport.end]);
 
   function resetViewport(rangeDays = days) {
     setViewport(initialViewport(rangeDays));
@@ -176,6 +185,9 @@ export function UsagePage({ admin = false }: { admin?: boolean }) {
           : <AsyncView state={{ ...seriesState, data: seriesState.data?.key === seriesKey ? seriesState.data.data : undefined }}>
             {(series) => <UsageCharts series={series} start={viewport.start} end={viewport.end} />}
           </AsyncView>}
+        {!admin && modelsReady && <AsyncView state={{ ...tokenState, data: tokenState.data?.key === seriesKey ? tokenState.data.data : undefined }}>
+          {(series) => <ModelTokenChart key={seriesKey} series={series} />}
+        </AsyncView>}
       </section>
       {modelsReady && <AsyncView state={{ ...state, data: state.data?.key === filterKey ? state.data.data : undefined }}>
         {(d) => <UsageBody data={d} offset={offset} onPage={setOffset} showOrgNote={admin} detailsOpen={detailsOpen} onDetailsToggle={setDetailsOpen} />}

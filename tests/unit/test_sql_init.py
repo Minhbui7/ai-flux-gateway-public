@@ -14,7 +14,7 @@ SPEC.loader.exec_module(module)
 
 def test_principal_sid_uses_client_id_binary_order() -> None:
     client_id = "81dc75eb-a908-4be6-ad44-88a045ebc17b"
-    sql = module.principal_sql("aiflux-fdpo-dev-api-identity", client_id)
+    sql = module.principal_sql("aiflux-example-dev-api-identity", client_id)
     assert "0x" + UUID(client_id).bytes_le.hex() in sql
     assert "TYPE=E" in sql
     assert "FROM EXTERNAL PROVIDER" not in sql
@@ -23,7 +23,7 @@ def test_principal_sid_uses_client_id_binary_order() -> None:
 
 def test_repair_is_limited_to_known_legacy_identity() -> None:
     sql = module.principal_sql(
-        "aiflux-fdpo-dev-api-identity",
+        "aiflux-example-dev-api-identity",
         "81dc75eb-a908-4be6-ad44-88a045ebc17b",
         "d655283f-9bba-4bf8-9825-6e3d05a5bf13",
     )

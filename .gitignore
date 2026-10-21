@@ -18,16 +18,16 @@ test-results/
 *.db-wal
 *.tfstate
 *.tfstate.*
-*.tfplan
-*.tfvars.json
-!*.tfvars.json.example
 .terraform/
 *.tfvars
 !*.tfvars.example
+*.tfvars.json
+!*.tfvars.json.example
 !.terraform.lock.hcl
 .tools/
-# Customer deployment inputs, state backups, plans, and internal RBAC handoffs
 .deployment/
+.azure/
+*.tfplan
 services/usage-ingestion/wheels/
 services/usage-ingestion/gateway/
 build/

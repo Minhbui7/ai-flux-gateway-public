@@ -64,7 +64,7 @@ def test_entra_client_id_validation():
         database_url="sqlite:///test.db",
         entra_audience="api://test",
         home_tenant_id="11111111-1111-4111-8111-111111111111",
-        entra_client_id="26f09831-946d-4dd3-874a-9d573ec7e4f4",
+        entra_client_id="00000000-0000-4000-8000-000000000003",
     )
     assert not valid.identity_errors()
 

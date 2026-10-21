@@ -1,9 +1,5 @@
-# Azure Blob backend authenticated through Azure CLI and Entra ID; do not add account keys or SAS tokens.
-resource_group_name  = "existing-state-resource-group"
-storage_account_name = "existingstateaccount"
-container_name       = "tfstate"
-key                  = "environment/main.tfstate"
-subscription_id      = "00000000-0000-0000-0000-000000000000"
-tenant_id            = "00000000-0000-0000-0000-000000000000"
-use_azuread_auth     = true
-use_cli              = true
+# Optional LOCAL backend path override only; no blob account/bootstrap is required.
+# Default is terraform.tfstate in this root. Keep state on encrypted protected disk.
+path = "aiflux-example-dev.tfstate"
+# Private keyless remote-state designs remain deferred in infra/state.
+# A future backend-type migration requires a reviewed init -migrate-state procedure.

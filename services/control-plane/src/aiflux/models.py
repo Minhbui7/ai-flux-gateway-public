@@ -30,6 +30,13 @@ class Base(DeclarativeBase):
     pass
 
 
+class Team(Base):
+    __tablename__ = "teams"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+
+
 class Organization(Base):
     __tablename__ = "organizations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -62,6 +69,7 @@ class TeamSubscription(Base):
     organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     team: Mapped[str] = mapped_column(String(100))
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), nullable=True, index=True)
     state: Mapped[str] = mapped_column(String(20), default="pending")
     desired_state: Mapped[str] = mapped_column(String(20), default="active")
     idempotency_key: Mapped[str] = mapped_column(String(36))

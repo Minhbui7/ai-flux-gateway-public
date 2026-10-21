@@ -77,7 +77,7 @@ compliance attestation. Confirm the deployed validation mode and the customer's
 required evidence; telemetry headers alone do not establish SFI/MISE compliance.
 
 Under Microsoft Secure Future Initiative (SFI) guidelines and MISE Compliance KPI requirements,
-the control-plane API (`aiflux-fdpo-dev-api`, App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4`)
+the control-plane API (`aiflux-example-dev-api`, App ID `00000000-0000-4000-8000-000000000003`)
 supports compliant token authentication:
 - **MISE Sidecar validation**: When deployed on Azure App Service with sidecar support (`AIFLUX_MISE_VALIDATION_ENDPOINT=http://127.0.0.1:8081/Validate`), token verification delegates via loopback HTTP to the Microsoft Entra ID authentication sidecar (`mcr.microsoft.com/entra-sdk/auth-sidecar:latest`). The sidecar performs token validation and emits OneCollector client telemetry (`s2svalidation_counter`).
 - **Telemetry-compliant key discovery fallback**: In environments without the sidecar (such as local development and automated testing), direct eSTS key discovery through `PyJWKClient` includes compliant MISE client telemetry headers: `User-Agent: MISE_Python/2.4.1`, `x-client-SKU: MISE_Python`, `x-client-VER: 2.4.1`, `x-app-id: <client_id>`, and `x-client-current-telemetry: 2|1001,0|<client_id>,0|`.
@@ -93,17 +93,25 @@ See `/openapi.json` for the generated control-plane contract. The main routes ar
 | Operation | Route |
 | --- | --- |
 | Identity / active catalog | `GET /api/me`, `GET /api/models` |
-| Team keys | `GET/POST /api/subscriptions` |
-| Explicit key reveal / rotate | `POST /api/subscriptions/{id}/reveal`, `/rotate` |
-| Suspend / reactivate / reconcile | `PUT /api/subscriptions/{id}/state`, `POST .../reconcile` |
+| Customer subscription metadata / Playground key | `GET /api/subscriptions`, `POST /api/subscriptions/{id}/reveal` |
+| IDS subscription list / create | `GET/POST /api/admin/subscriptions` |
+| IDS explicit key reveal / rotate | `POST /api/admin/subscriptions/{id}/reveal`, `/rotate` |
+| IDS suspend / reactivate / reconcile | `PUT /api/admin/subscriptions/{id}/state`, `POST .../reconcile` |
 | Scoped showback / export | `GET /api/usage`, `GET /api/usage/export` |
 | Scoped minute charts | `GET /api/usage/timeseries`, `GET /api/admin/usage/timeseries` |
+| Customer tokens stacked by model | `GET /api/usage/model-tokens` |
 | Historical usage models | `GET /api/usage/models`, `GET /api/admin/usage/models` |
 | IDS onboarding | `/api/admin/organizations`, `/api/admin/members` |
 | IDS showback / safety / prices | `/api/admin/usage`, `/api/admin/safety`, `/api/admin/prices` |
 | IDS gateway settings / history / reconcile | `/api/admin/gateway-settings`, `/{scope}/history`, `/{scope}/reconcile` |
 
 ### Admin-managed gateway settings
+
+#### Legacy configuration
+
+The following contract remains available when versioned controls are disabled.
+For team/subscription controls and the separate safety page, use the versioned
+contract below. Both are opt-in; implementation does not imply live activation.
 
 This feature is opt-in for the guarded development APIs, not production `/v1`.
 Terraform `dev_admin_settings_enabled` controls the fragment resources, narrowly
@@ -140,6 +148,9 @@ booleans or fractional numbers. Unknown fields and scopes are rejected.
 SQL stores revisions before publication. The settings fragment is rendered only
 from validated values and published with its exact APIM ETag. Readback must match
 before a revision becomes `published`; an APIM response alone is not enough.
+Fragment writes also wait for APIM's asynchronous validation result (up to
+60 seconds per fragment). A rejected or timed-out operation leaves a failed
+revision for explicit reconciliation rather than reporting success.
 Stale version, unrecognized fragment drift or another pending revision produces
 409, not a blind overwrite. APIM publication/readback failure produces 502 and a
 durable failed revision. Retry using
@@ -177,7 +188,7 @@ and safety denial is a separate 403 (`content_safety_rejected`). Dependency erro
 remain fail-closed 503. Native counts are gateway-local, estimated and may overshoot
 under concurrency; they are not strict global billing/spend enforcement.
 
-Use migration `0002` before deploying this API version. Package the bootstrap
+Use migration `0003` before deploying this API version. Package the bootstrap
 fragment (`gateway/policies/settings-unconfigured.xml`) as in the API Dockerfile.
 Terraform owns the invariant API policy and all backends, and only ignores the
 runtime fragment's `body.properties.value`. The API identity has read/write rights
@@ -186,6 +197,110 @@ write. A subsequent Terraform apply must preserve published fragment values.
 An intentional fragment replacement resets it to denied and needs explicit
 republication. Do not treat reverting application code, changing activation flags,
 or running Terraform as a substitute for audited configuration rollback.
+
+#### Versioned team limits and Content Safety
+
+Operator configuration `dev_gateway_controls_v2_enabled` opts into contract
+`schema_version: 2`. Migration `0003` creates tenant-scoped stable team IDs and
+backfills existing subscriptions using their exact labels (case differences
+remain distinct). Admin subscription creation still accepts `team`
+and associates it with a stable ID; no API key value is stored in settings.
+
+`GET /api/admin/gateway-targets?offset=0&limit=100&organization_id=<uuid>` returns
+paginated organization/team/subscription IDs and names. IDS administrators only;
+organization/target associations are checked again before publication. Unknown,
+unmigrated, disabled-organization and oversized targets cannot bypass validation.
+
+Versioned gateway configuration:
+
+```json
+{
+  "schema_version": 2,
+  "defaults": {
+    "rpm": 2, "tpm": 1024, "token_quota": 10000, "quota_period": "Daily",
+    "concurrency": 2, "request_quota": 100, "request_quota_period": "Daily"
+  },
+  "teams": [],
+  "subscriptions": [],
+  "safety": {
+    "profile": "Custom", "hate": 1, "violence": 1, "sexual": 1, "self_harm": 1,
+    "prompt_attack": true, "protected_material": false,
+    "input_filtering": true, "output_filtering": true
+  }
+}
+```
+
+These are illustrative values, not automatically seeded budgets. Team entries
+contain `organization_id`, `team_id`, `limits`; subscription entries contain
+`organization_id`, `subscription_id`, `limits`. Each override is a complete set of
+limits. Inheritance is defaults -> team -> subscription; an additional aggregate
+team ceiling applies even where subscriptions override inherited limits.
+`request_quota: null` explicitly disables that request-count quota; it does not
+disable TPM, token quotas, concurrency or any aggregate team constraint.
+Concurrency is one of 1/2/4/8/16. RPM stays within the operator-approved ceiling
+(default 2); TPM uses the lowest supported ceiling across configured routes.
+
+Both guarded routes share **one configuration, revision and counter namespace**.
+Saving either alias publishes the same typed snapshot to all provisioned scopes.
+This avoids incompatible token-counter values or fresh budgets by switching API,
+model, primary/secondary key or settings revision. Key rotation keeps counters.
+Initial legacy-to-versioned cutover changes namespaces: explicitly approve its
+counter-reset effect. Period/team identity changes can change applicable counters.
+
+Membership bindings are frozen into each publication for deterministic retries.
+Admin creation automatically publishes a fresh membership snapshot using unchanged
+published limits/safety values. Uninitialized settings, pending administrator
+edits, drift or publication failures leave `gateway_access: pending` separately
+from APIM lifecycle `state`. Reconcile retries only a membership revision owned
+by that subscription, never another administrator's pending configuration edit.
+Duplicate create/reconcile calls do not add revisions once membership is published.
+No initial defaults or capability approvals are invented. Customers still fail
+closed with `subscription_controls_unpublished` until publication succeeds.
+Limits do not cover anonymous/preflight/
+model-list/invalid-shape requests. Validated generation attempts reaching admission
+count even if later inspection/backend work fails; retries are not new client calls.
+Layered native counters are not transactional and can increment before a later
+gate rejects. Native limits are distributed estimates, not monetary hard caps.
+
+Daily request counters partition at UTC midnight; Monthly means a UTC calendar
+month. These use stable, calendar-partitioned native lifetime counters, not a
+30-day approximation. Monthly selection is capability-gated until operator
+validation; counter lifecycle/growth must be reviewed before high-scale use.
+Native token quotas retain supported UTC periods and estimation caveats.
+
+The separate `/api/admin/content-safety-settings` list, `/{scope}` PUT,
+`/{scope}/history` GET and `/{scope}/reconcile` POST share the gateway revision.
+Safety PUT accepts `expected_version`, `configuration` (only the safety object),
+`reason` and `acknowledge_relaxation`. Raising thresholds or disabling existing
+protection requires explicit relaxation acknowledgement. Gateway PUT must preserve
+the current safety object; stale/legacy writes cannot silently discard new fields.
+Safety settings require an initialized versioned gateway snapshot.
+
+Application presets Standard/Strict require all four thresholds 4/1 respectively,
+prompt protection, protected-text detection and input/output scanning enabled.
+They are **not official Azure preset names**. Custom permits thresholds 0-7; lower
+is stricter and zero blocks all severities, not "off". Hate covers discrimination/
+hate detection, not generalized fairness. Operator floors lock input/output scans
+and prompt protection unless separately approved to allow relaxation. Mandatory
+input PII redaction is independent and cannot be switched off here.
+The Terraform-owned policy also enforces this scan/shield floor against stale
+runtime opt-outs when the operator disables relaxation; the API floor is not
+the sole enforcement layer.
+
+Protected material is an additional outbound REST scan, not a cosmetic
+`llm-content-safety` toggle. It is capability-gated, uses managed identity, scans
+bounded normalized output, and fails closed on service/shape/size failures.
+Supported text detection is not a legal guarantee or a protected-code classifier.
+Generated-but-blocked usage remains billable and must remain in FinOps telemetry.
+Semantic custom categories and blocklist authoring are not implemented.
+
+Settings responses expose capabilities, operator bounds and enforcement state.
+Provisioned-only mode records/publishes settings without claiming runtime
+enforcement. Both pages preserve unsaved edits on conflicts. Readback/publication
+is not atomic gateway propagation: partial multi-scope failures remain durable,
+block subsequent changes and require explicit reconciliation. Previous complete
+snapshots can be republished as new audited revisions. No raw XML or caller-
+supplied ARM targets are accepted; fragment size is bounded to 64KiB.
 
 ### Minute usage charts
 
@@ -225,9 +340,49 @@ SQL Server uses `DATEADD`/`DATEDIFF` minute grouping, floating-point latency
 averages, and BIGINT token sums; SQLite tests also compile the query with the
 MSSQL dialect to catch dialect-specific mistakes.
 
+### Customer model-token aggregation
+
+`GET /api/usage/model-tokens` accepts the same customer `days`, `subscription_id`,
+`model` and paired timezone-qualified `start`/`end` filters as the minute-series
+endpoint. Organization scoping comes only from the authenticated principal;
+foreign or missing subscription IDs return 404. No admin cross-organization
+endpoint is added. Viewport checks are shared with the existing series endpoint.
+
+Response: `{items, start, end, interval_seconds}`. Each sparse item has
+`{start, end, model, requests, total_tokens, missing_token_requests}`. Grouping is
+by UTC bucket and model across all matching rows, independent of pagination.
+The smallest interval in 60/300/900/3600/21600/43200/86400/604800 seconds that
+produces at most 120 buckets is chosen. Buckets are anchored at 2000-01-01 UTC;
+response item bounds are clipped to the half-open viewport.
+An absent bucket/model pair means no ingested requests. A null `total_tokens`
+means all requests in that pair lack a complete input/output measurement.
+Partial known totals exclude incomplete pairs and carry missing-request counts.
+SQL Server uses minute `DATEDIFF` bucket indexes and BIGINT token sums; SQLite
+tests execute aggregation and compile the production SQL Server expression.
+The allowlisted, server-selected interval is a SQL literal so the repeated
+grouping expression remains identical with pyodbc positional parameters. User
+filters remain bound parameters. Empty model identifiers are displayed as
+**Unknown model** without changing their recorded counts.
+
 Subscription creation requires a UUID `Idempotency-Key`. SQL ownership is
 committed before activating an APIM key. A failed ARM operation records `failed`
 and returns HTTP 502. Retry the same idempotency key or explicitly reconcile.
+
+Subscription management is IDS-admin-only across organizations. Admin creation
+requires an explicit enabled `organization_id`; list supports optional
+`organization_id`, `offset` and `limit`. Admin output includes organization
+identity/name, stable `team_id`, and `gateway_access` (`ready`, `pending` or
+`not_managed`) with an actionable `gateway_message`. `ready` describes membership,
+not activation: a suspended APIM subscription still cannot send requests.
+No schema migration is added: membership-refresh ownership is recorded in the
+existing frozen gateway revision document.
+
+Legacy create/rotate/state/reconcile paths remain admin-gated compatibility
+aliases (legacy create targets the admin's own organization). Customer writes
+return 403. Customer list and active-key reveal remain organization-scoped for
+Playground and usage filters. Customers therefore still receive their own key in
+the browser: removal of management UI is not admin-exclusive secret custody.
+Admin subscription audit events retain the actual actor and target organization.
 Reusing a key with a different request returns 409. No secret is stored in SQL.
 Keys only come from APIM `listSecrets`, and responses use `Cache-Control: no-store`.
 

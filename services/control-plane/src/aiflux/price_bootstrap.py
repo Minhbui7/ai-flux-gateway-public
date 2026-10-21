@@ -23,7 +23,9 @@ from aiflux.schemas import PriceCreate
 def import_prices(db: Session, settings: Settings, path: Path, actor: UUID) -> int:
     if not settings.catalog_configured:
         raise ValueError("Price import requires an accepted catalog")
-    prices = TypeAdapter(list[PriceCreate]).validate_python(json.loads(path.read_text(encoding="utf-8")))
+    prices: list[PriceCreate] = TypeAdapter(list[PriceCreate]).validate_python(
+        json.loads(path.read_text(encoding="utf-8"))
+    )
     if not prices:
         raise ValueError("Price import must contain reviewed rules")
     catalog = Catalog.load(settings.catalog_path)

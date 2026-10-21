@@ -8,6 +8,8 @@ from aiflux.catalog import Catalog
 def test_dev_catalog_keeps_unaccepted_placeholders_uncallable():
     catalog = Catalog.load(Path(__file__).resolve().parents[2] / "gateway/catalog/dev-models.json")
     requested = {
+        "gpt-5.4-nano",
+        "DeepSeek-V4-Flash",
         "gpt-6-astra",
         "gpt-6-luna",
         "gpt-6-sol",
@@ -69,7 +71,8 @@ def test_catalog_api_exposes_models_with_catalog_acceptance_state(env):
     response = env.client.get("/api/models", headers=env.customer)
     assert response.status_code == 200
     items = response.json()["items"]
-    assert len(items) == 11
+    assert len(items) == 13
+    assert {m["id"] for m in items} == {m.id for m in catalog.models}
     assert {m["id"] for m in items if m["enabled"]} == {m.id for m in catalog.models if m.enabled}
     assert {m["id"] for m in items if m["placeholder"] and not m["enabled"]} == {
         m.id for m in catalog.models if m.placeholder
@@ -91,4 +94,6 @@ def test_catalog_api_never_advertises_more_than_configured_gateway_limit(env):
     env.settings.gateway_max_completion_tokens = 50000
     response = env.client.get("/api/models", headers=env.customer)
     assert response.status_code == 200
-    assert all(model["max_completion_tokens"] <= 50000 for model in response.json()["items"] if model["enabled"])
+    assert all(
+        model["max_completion_tokens"] <= 50000 for model in response.json()["items"] if model["enabled"]
+    )

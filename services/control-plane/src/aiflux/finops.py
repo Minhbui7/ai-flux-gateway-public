@@ -317,3 +317,73 @@ def usage_series_response(
         item["minute"] = aware(datetime.fromisoformat(minute) if isinstance(minute, str) else minute)
         items.append(item)
     return {"items": items, "start": start, "end": end, "interval_seconds": 60}
+
+
+TOKEN_BUCKET_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
+TOKEN_BUCKET_INTERVALS = (60, 300, 900, 3600, 21600, 43200, 86400, 604800)
+
+
+def token_bucket_interval(start: datetime, end: datetime) -> int:
+    first = (start - TOKEN_BUCKET_EPOCH).total_seconds()
+    last = (end - TOKEN_BUCKET_EPOCH).total_seconds()
+    for seconds in TOKEN_BUCKET_INTERVALS:
+        if math.ceil(last / seconds) - math.floor(first / seconds) <= 120:
+            return seconds
+    raise ValueError("Token chart viewport exceeds the supported range")
+
+
+def model_token_query(
+    dialect: str, organization_id: str, subscription_id: str | None,
+    start: datetime, end: datetime, interval_seconds: int, model: str | None = None,
+) -> Select:
+    if interval_seconds not in TOKEN_BUCKET_INTERVALS:
+        raise ValueError("Unsupported model token bucket interval")
+    timestamp = UsageRecord.occurred_at
+    if dialect == "mssql":
+        epoch = literal_column("CONVERT(datetime2, '20000101', 112)", type_=DateTime())
+        minutes = func.datediff(literal_column("minute"), epoch, timestamp)
+        # Positional parameters in repeated GROUP BY expressions are distinct
+        # to SQL Server. Only validated server-owned interval constants are inlined.
+        bucket = func.floor(cast(minutes, Float) / literal_column(str(interval_seconds // 60)))
+    elif dialect == "sqlite":
+        seconds = cast(func.strftime("%s", timestamp), BigInteger) - int(TOKEN_BUCKET_EPOCH.timestamp())
+        bucket = func.floor(cast(seconds, Float) / interval_seconds)
+    else:
+        raise ValueError(f"Model token aggregation does not support database dialect {dialect!r}")
+    missing = UsageRecord.input_tokens.is_(None) | UsageRecord.output_tokens.is_(None)
+    return (
+        select(
+            bucket.label("bucket"),
+            UsageRecord.model,
+            func.count(UsageRecord.id).label("requests"),
+            func.sum(
+                cast(UsageRecord.input_tokens, BigInteger) + cast(UsageRecord.output_tokens, BigInteger),
+            ).label("total_tokens"),
+            func.sum(cast(case((missing, 1), else_=0), BigInteger)).label("missing_token_requests"),
+        )
+        .where(
+            *usage_conditions(organization_id, subscription_id, model), timestamp >= start, timestamp < end,
+        )
+        .group_by(bucket, UsageRecord.model)
+        .order_by(bucket, UsageRecord.model)
+    )
+
+
+def model_token_response(
+    db: Session, organization_id: str, subscription_id: str | None,
+    start: datetime, end: datetime, model: str | None = None,
+) -> dict[str, Any]:
+    interval = token_bucket_interval(start, end)
+    query = model_token_query(
+        db.get_bind().dialect.name, organization_id, subscription_id, start, end, interval, model,
+    )
+    items = []
+    for row in db.execute(query).mappings():
+        bucket_start = TOKEN_BUCKET_EPOCH + timedelta(seconds=int(row["bucket"]) * interval)
+        items.append({
+            "start": max(start, bucket_start),
+            "end": min(end, bucket_start + timedelta(seconds=interval)),
+            "model": row["model"], "requests": row["requests"],
+            "total_tokens": row["total_tokens"], "missing_token_requests": row["missing_token_requests"],
+        })
+    return {"items": items, "start": start, "end": end, "interval_seconds": interval}

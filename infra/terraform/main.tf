@@ -34,10 +34,6 @@ resource "terraform_data" "approval" {
       error_message = "Cost/config approval is required before planning infrastructure. Inference remains blocked independently."
     }
     precondition {
-      condition     = (!local.platform_stage && !var.dev_openai_inference_enabled && !var.dev_unified_inference_enabled) || var.manual_rbac_verified
-      error_message = "Elevated privileges required for role assignment: an authorized administrator must provision and verify the documented manual RBAC grants before runtime or inference rollout."
-    }
-    precondition {
       condition     = data.azurerm_client_config.current.subscription_id == var.subscription_id
       error_message = "Provider subscription must match the explicitly supplied subscription."
     }
@@ -112,7 +108,7 @@ resource "azapi_resource" "ai" {
   type      = "Microsoft.CognitiveServices/accounts@2024-10-01"
   parent_id = local.rg_id
   name      = each.key == "language" ? "${local.prefix}-foundry" : "${local.prefix}-${each.key}"
-  location  = each.key == "language" ? coalesce(var.model_location, var.location) : var.location
+  location  = var.location
   tags      = local.tags
   identity {
     type = "SystemAssigned"

@@ -11,16 +11,16 @@ deployment; a customer rehearsal and the acceptance below are still required.
 
 | Setting | Supported choice |
 | --- | --- |
-| Operator | Windows, PowerShell 5.1+, Python 3.11+, Azure CLI, Git, Terraform 1.12.1; locked AzureRM/AzAPI providers |
+| Operator | Windows, PowerShell 5.1+, Python 3.11+, Azure CLI, Git, Terraform 1.16.x (tested locally with 1.16.5); locked AzureRM/AzAPI providers |
 | Identity | One customer Entra tenant, three new dedicated API/customer/admin registrations, signed-in bootstrap user |
-| Gateway/app region | `eastus` or `southeastasia`; primary models remain pinned to East US, with Sweden Central backends |
-| SQL region | `eastus`, `australiaeast` or `southeastasia`, subject to customer entitlement and capacity |
+| Gateway/app region | `legacy` profile: East US with East US/Sweden model backends. `australiaeast-luna`: Australia East only |
+| SQL region | `eastus` or `australiaeast`, subject to customer entitlement and capacity |
 | Network presets | `10.240.0.0/16` or `10.241.0.0/16`; `.1.0/24` App Gateway, `.3.0/24` private endpoints, `.4.0/24` integrated API/Function |
 | Compute | Basic v2 APIM capacity 1, B1 Linux apps, S0 SQL; customer reviews cost and regional support before applying |
 | Telemetry retention | 30 days; customer approval and metadata-only logging remain required |
-| Models | Pinned `gpt-5.6-luna`, `gpt-5.6-sol`, `claude-haiku-5-5`; no silent model/version/region substitution |
-| DNS/TLS | New Azure-assigned `<dns_label>.<location>.cloudapp.azure.com` and new customer-issued certificate in the new private vault |
-| State | Separate main/model Azure Blob state keys in an existing approved private container; Azure CLI/Entra data-plane access required |
+| Models | `legacy`: pinned Luna, Sol and Haiku. `australiaeast-luna`: pinned GPT-5.6 Luna only at 120 GlobalStandard units; no silent substitution |
+| DNS/TLS | New Azure-assigned `<dns_label>.<profile-region>.cloudapp.azure.com` and new customer-issued certificate in the new private vault |
+| State | Customer-local, separate main/model state files; no operator VM, NAT, remote backend or GitHub runner |
 | Customer access | New direct HTTPS App Service portals/API and guarded APIM `/dev/llm/v1`; edge remains operator-restricted candidate |
 
 SQL/network options are deliberately limited. These are deployment constraints,
@@ -28,10 +28,136 @@ not promises of capacity or approval for a customer's network. Reject overlappin
 CIDRs, unsupported regions/models or governance restrictions during preflight and
 review; do not widen access or substitute resources automatically.
 
+### Australia East Luna-only profile
+
+Set `"deployment_profile": "australiaeast-luna"` and
+`"sql_location": "australiaeast"` in the customer JSON. The profile field is
+optional: omission or `"legacy"` preserves the existing East US behavior.
+Australia East requires a new deployment prefix, resource group, state and
+dedicated registrations; switching the profile of an existing state is not a
+migration. Do not reuse a failed deployment's saved plan or retired state.
+
+This bounded profile places platform resources, SQL and one pinned Luna deployment
+in Australia East. It creates no Sweden account and does not deploy, list or route
+Sol or Haiku. Both guarded API surfaces reject omitted aliases. The customer API,
+portals and disabled ingestion image receive the same one-model catalog.
+Luna remains version `2026-07-09`, GlobalStandard capacity 120 (120,000 TPM).
+Adding models, changing capacity or adding secondary regions needs a separate
+review. Automatic routing is not implemented.
+
+**GlobalStandard is not an Australia-only processing guarantee.** Review Azure's
+model terms and processing geography even when the account is in Australia.
+Check current subscription quota and entitlement before applying.
+
+The launcher uses the isolated `infra\models-australiaeast` model root for this
+profile, sharing the pinned model specification but leaving legacy resource
+addresses and state unchanged. Inspect its models-phase saved plan with:
+
+```powershell
+terraform -chdir=infra\models-australiaeast show <absolute-path-to-models.tfplan>
+```
+
+The verifier must accept exactly one ready Luna backend in Australia East, with
+the correct account/subscription, version, SKU, capacity, gateway inference role
+and successful direct smoke. There is no Haiku prerequisite for this profile.
+The single backend has no regional failover.
+
+Before a full apply, check SQL S0 capabilities, Linux B1/one-instance validation,
+APIM Basic v2, safety/Language dependencies, WAF/zones, quotas, inherited policy
+and the revised regional cost estimate. A successful Microsoft.Web validation
+does not reserve capacity. Any billable allocation probe needs separate approval;
+do not use `-target` or automatically adopt probe resources. Review a new full
+saved plan for each phase. Private SQL initialization, TLS, safety and signed-in
+acceptance remain mandatory. Keep production `/v1`, public edge and ingestion
+disabled. Budget alerts are notifications, not a spending cap.
+
 The App Gateway candidate provisions fresh DNS/TLS for operator acceptance. It is
 **not** the public customer ingress in this pilot. Customers use the dedicated
 App Service origins and guarded APIM endpoint. Production edge publication and
 custom-domain support are separate work; do not set `public_edge_live_gates_approved`.
+
+Generated catalog backend IDs must match Terraform's physical APIM backend names
+(`dev-` prefix, lowercase, with dots replaced by hyphens). FinOps matches the
+telemetry backend ID exactly to attribute provider and backend region; it does
+not substitute the gateway region. After deploying a corrected catalog, the
+scheduled ingestion overlap can reconcile recent records. Older records outside
+that overlap require a separately reviewed replay; missing attribution remains
+Unknown rather than being priced against a guessed region.
+
+### Reconciling an existing pilot with Terraform
+
+The launcher supports `app_always_on` in customer configuration. It is a map of
+`api`, `customer` and `admin` Boolean overrides; omitted apps default to `true`,
+preserving existing deployment behavior. It populates each Terraform
+`apps.<name>.always_on` field (also optional, default `true`). For the reviewed
+Australia East pilot, API remains `true` and both portals are explicitly `false`.
+This preserves the live choice instead of silently restoring Always On on the
+next apply. Portal cold starts remain possible; the ingestion Function retains
+Always On independently. This setting does not resize the shared B1 plan.
+
+An optional `monthly_budget` object manages a resource-group budget and actual-cost
+email alerts at 50%, 80% and 100%. Omission or `null` creates no budget, preserving
+the default for existing customers. Example customer configuration:
+
+```json
+{
+  "app_always_on": { "api": true, "customer": false, "admin": false },
+  "monthly_budget": {
+    "name": "pilot-monthly",
+    "amount": 1000,
+    "start_date": "2026-10-01T00:00:00Z",
+    "end_date": "2027-10-01T00:00:00Z",
+    "contact_emails": ["operator@example.com"],
+    "import_existing": true
+  }
+}
+```
+
+Dates must be increasing, first-of-month UTC dates; choose a valid period for the
+customer, not the illustrative dates above. Amount is in the subscription's
+**billing currency**, not a currency selected by this configuration. This is an
+alerting budget, **not a spending cap**; it covers only the resource group and
+does not impose model token quotas. Review expiry and contacts operationally.
+The deploying identity needs the budget read/write permissions in addition to
+the existing workload deployment permissions; no runtime identity gains them.
+
+For a budget that already exists, read its exact name, scope, amount, dates,
+contacts and notification settings first. Set `import_existing=true` only after
+verifying ownership. The configuration-driven import in
+[budget.tf](../infra/terraform/budget.tf) targets
+`azurerm_consumption_budget_resource_group.main["main"]` at that exact group/name.
+A plan previews the import and any resulting changes; **only a separately approved
+apply imports it into state**. Do not create a duplicate or imperatively import
+unreviewed resources. For a new budget, set `import_existing=false` and review the
+creation. Keep the import flag after adoption; Terraform skips importing an
+address already managed in state. `prevent_destroy` blocks accidental removal or
+replacement while this resource configuration remains in place; removing the
+resource block itself is not protected. Changing/removing budget ownership needs
+explicit state/lifecycle review, not an automatic destructive workaround.
+
+Keep actual deployed image digests in the current phase's protected inputs.
+A build manifest records **built** images, not proof that all four were deployed;
+an API/ingestion-only rollout must not relabel unchanged portal images as new.
+Changes to Terraform/launcher source invalidate saved-plan/source bindings.
+Do not rewrite fingerprints to make old evidence pass. The next standard launcher
+rollout requires a genuine build and a fresh complete-plan review. A read-only
+reconciliation plan may instead inspect the existing phase inputs with the actual
+deployed digests; that does not certify a new application build or authorize apply.
+
+Terraform is not the entire release workflow. Keep Entra bootstrap/consent, SQL
+migrations and scoped database-user creation, reviewed price import followed by
+bootstrap disablement, certificate issuance/manual renewal, normal ingestion
+reconciliation and signed-in acceptance as explicit reviewed steps. Existing
+nano/Flash deployments remain external dependencies, not Terraform-owned
+deployments. Adopting their lifecycle is a separate import decision. No public
+SQL/Key Vault access, native `/v1` release, automatic routing, historical replay or
+capacity increase is implied by reconciliation.
+
+Do not suppress remaining differences with broad `ignore_changes` or copy live
+policies wholesale. APIM may reserialize policy XML; still review policy
+differences rather than assuming equivalence. App Service logging normalization
+and Function content-share settings also remain visible in complete plans.
+Local validation is not a zero-drift claim or permission to apply those changes.
 
 ## Customer prerequisites and permissions
 
@@ -40,45 +166,6 @@ Owner or Contributor for deployment. **Contributor alone cannot assign Azure rol
 or create custom roles**: an authorized Owner/RBAC administrator must separately
 delegate the required role-assignment/custom-role actions at the reviewed scopes.
 Resource deployment cannot grant itself that authority.
-
-### Manual Azure RBAC handoff
-
-**Elevated privileges required for role assignment.** The main Terraform root
-creates user-assigned identities, but does **not** create role assignments or
-custom role definitions. An authorized Azure RBAC administrator must provision
-and verify the following grants after the prerequisites apply; this must happen
-before platform, inference or edge rollout. `identity_principal_ids`,
-`apim_resource_id`, and `container_registry` Terraform outputs identify some
-of the exact principals and scopes; resolve the other resources in the same
-resource group. Never substitute a subscription-wide scope for a resource scope.
-
-| Identity | Role | Resource scope |
-| --- | --- | --- |
-| API, customer, admin (and ingestion if using a container image) | `AcrPull` | This deployment's container registry |
-| Gateway | `Cognitive Services User` | Each of the Content Safety and Language/Foundry accounts |
-| Ingestion | `Storage Blob Data Owner`, `Storage Queue Data Contributor`, `Storage Table Data Contributor` | This deployment's Function storage account |
-| Gateway | `Key Vault Secrets User` | This deployment's Key Vault |
-| API, customer, admin, gateway, ingestion | `Monitoring Metrics Publisher` | This deployment's Application Insights |
-| API, ingestion | `Log Analytics Reader` | This deployment's Log Analytics workspace |
-| API | Custom `<prefix>-subscription-manager` role | This deployment's APIM service |
-| Edge (only when TLS edge is enabled) | `Key Vault Secrets User` | The reviewed certificate Key Vault |
-| API (only when admin settings enabled) | Custom `<prefix>-gateway-settings` role | The approved APIM settings fragment(s) |
-
-The custom subscription-manager role is assignable only within this resource
-group and permits APIM service/products/subscriptions read, APIM subscription
-write, listSecrets and primary/secondary key regeneration. It does **not**
-manage Azure subscriptions. The optional gateway-settings role permits only
-APIM policy fragment read/write. The exact least-privilege definitions remain
-commented in `infra/terraform/rbac.tf` and `gateway-settings.tf` for administrator
-review; Terraform must not be used to create them from this root.
-
-The administrator should record the principal ID, resource scope, role ID and
-verified effective assignment for every grant through the approved internal
-process. Set `manual_rbac_verified = true` **only** after checking the grants;
-the Terraform precondition blocks runtime/inference rollout until then. Manual
-changes to roles are outside this root's state and must be managed separately.
-Existing saved plans with Terraform-managed RBAC are invalid after this code
-change: discard and regenerate them before review or apply.
 
 Azure Owner/Contributor also does not confer Entra app-registration/consent rights,
 SQL data-plane administration, model entitlements or DNS/certificate authority.
@@ -108,26 +195,6 @@ backup administrators. The launcher ignores this directory in Git and build
 uploads; ignore rules are **not encryption or access control**. Do not place the
 configuration or state elsewhere under the Docker build source tree.
 
-### Azure Blob Terraform state
-
-Both deployment roots declare `backend "azurerm" {}`. Configure an existing private
-Blob container in the optional `backend` object of the customer configuration,
-with distinct `<prefix>/main.tfstate` and `<prefix>/models.tfstate` keys. The
-launcher writes separate ignored `.backend.hcl` files, uses Azure CLI/Entra
-authentication (`use_azuread_auth = true`, `use_cli = true`) and does not use
-storage account keys. The signed-in operator needs Storage Blob Data Contributor
-at the state-account scope and network access to the Blob data endpoint. This
-permission does not grant the separate Azure RBAC role-assignment permissions.
-
-To migrate an existing environment, use Terraform `init -migrate-state`
-after binding the old local backend to the actual protected state file. Initialize
-the separate models key empty only if no model resources are already managed.
-Preserve the protected pre-migration local backup until the remote state and
-recovery procedure have been reviewed. Do not reapply saved local-state plans or
-pass `-state` when using the remote backend. Before migration for any other
-environment, confirm the destination key is empty and that no other Terraform
-writer is active; do not automatically adopt or overwrite existing remote state.
-
 Resource providers must be registered by an authorized subscription administrator.
 The launcher checks the required namespaces and reports missing ones; it does not
 register them implicitly. For each reported provider, the administrator can use:
@@ -143,6 +210,55 @@ attestation, not a capability inferred from a role name.
 
 ## One entry point and resumable phases
 
+### Existing Australia East budget deployments
+
+The `australiaeast-luna` profile remains Luna-only by default. After verifying
+operator-created GlobalStandard deployments and passing the guarded gateway
+checks, explicitly opt in through `additional_model_aliases`:
+
+```json
+"additional_model_aliases": ["DeepSeek-V4-Flash", "gpt-5.4-nano"]
+```
+
+These exact GA versions are pinned in the shared model specification:
+DeepSeek-V4-Flash `2026-04-23` and gpt-5.4-nano `2026-03-17`, capacity250 each.
+They are externally managed: neither model Terraform root creates, imports or
+deletes them. The verifier checks exact ARM identity, version, region, capacity,
+endpoint, gateway role and bounded direct completion. DeepSeek uses the Foundry
+model-inference endpoint and `max_tokens`; nano uses OpenAI v1 and
+`max_completion_tokens`. Both retain subscription, safety and PII policies.
+
+Stage them using `dev_unified_candidate_model_aliases` in the reviewed main-root
+plan while leaving `dev_unified_accepted_model_aliases` empty and the deployed
+catalog unchanged. Candidates are hidden from the gateway model listing. Only
+after per-model guarded acceptance should they be added to the customer
+configuration and accepted inputs, and customer catalog images rebuilt. Adding
+aliases invalidates the build fingerprint. Continue at the current deployment
+phase (including enabled ingestion and its original cutoff); do not rerun an
+earlier phase to add models. API and ingestion use the same generated catalog
+for model/provider/region attribution. No prices or automatic routing are implied
+by model activation; enter reviewed Azure rates separately.
+
+The customer build filters bundled price rules to exact enabled
+model/provider/region endpoints; it never imports legacy-region rules into
+Australia East. Reviewed on 19 October 2026 with the Australia East and USD
+selectors on Microsoft's [Azure OpenAI pricing](https://azure.microsoft.com/en-us/pricing/details/azure-openai/)
+and [DeepSeek pricing](https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/deepseek/)
+pages, the Global Standard rates per million tokens are:
+
+| Model | Input USD | Cached input USD | Output USD |
+|---|---:|---:|---:|
+| gpt-5.4-nano | 0.20 | 0.02 | 1.25 |
+| DeepSeek-V4-Flash (GA, not 0731) | 0.19 | 0.028 | 0.51 |
+
+Rules are effective from the review, not retroactively inferred. These are
+public estimates, not contract/invoice rates, and nano is not cheaper than
+Luna's displayed short-context rates. Use the existing explicit one-off
+`dev_price_bootstrap_enabled` Terraform input only after guarded model acceptance,
+verify the audited SQL rules, then disable it in a separately validated plan.
+Do not leave deployment price import enabled permanently. Missing token/cache
+telemetry or prices for other models still produce incomplete/Unknown costs.
+
 ```powershell
 .\scripts\deploy.ps1 -Config .deployment\customer.json
 ```
@@ -153,8 +269,8 @@ dedicated registrations, and advances through these phases:
 | Phase | Result / checkpoint |
 | --- | --- |
 | `prerequisites` | Main root creates private-data network, identities, registry, SQL and protection/APIM prerequisites; no app or inference acceptance |
-| `models` | Separate model root creates Sweden account and the two pinned GPT deployments in both regions, with serial writes |
-| Build | ACR builds API, customer, admin and ingestion images with customer identity/origins and a three-model catalog; all references are resolved to SHA-256 digests |
+| `models` | Legacy root creates Sweden account and pinned GPT deployments in both regions; Australian root creates Luna only in the primary account, with serial writes |
+| Build | ACR builds API, customer, admin and ingestion images with customer identity/origins and the profile-specific catalog; all references are resolved to SHA-256 digests |
 | `platform` | Deploy all four images; inference and ingestion remain gated; API can now be initialized via private SQL |
 | `edge-bootstrap` | New public IP/DNS and HTTP challenge-only edge preparation; no accepted HTTPS/public release |
 | `candidate` | Requires direct model evidence, private SQL and certificate checkpoints; guarded routes/direct portals enabled, catalog not yet accepted |
@@ -212,8 +328,8 @@ automated steps. Do not mark an attestation true solely to continue.
 | RG/providers/RBAC / subscription owner | Contributor lacks role-assignment authority; provider/governance decisions need approval | Existing RG, registered providers, reviewed create/assign-role rights; no blanket Graph or runtime Owner grants |
 | App registrations/consent / directory administrator | Resource deployment roles do not confer directory rights | Run `-Action identities` as the configured authorized bootstrap user, or have directory admin grant reviewed app creation/role-assignment authority; verify dedicated apps, exact redirects, `access_as_user`, `ids_admin` and tenant policy consent |
 | Model terms/quota/access / model administrator | Provider entitlement, terms and capacity are customer-specific | Approve pinned spec and paid direct smoke, set `model_terms_and_quota_reviewed`; unsupported versions block, never substitute |
-| Haiku deployments / Foundry model administrator | Existing model root intentionally does not own Haiku | In Foundry portal deploy new `claude-haiku-5-5`, version `2`, GlobalStandard, capacity 50 in East US and 30 in Sweden Central; verify exact metadata against `infra\models\model-spec.json` |
-| Direct inference operator role / authorized RBAC administrator | Gateway identity roles do not authorize the human verifier | Assign operator the reviewed inference roles at the two accounts only; verify direct smoke without exporting tokens |
+| Haiku deployments / Foundry model administrator | Legacy profile only; the Australia East Luna-only profile excludes Haiku | For legacy, deploy `claude-haiku-5-5`, version `2`, GlobalStandard, capacity 50 in East US and 30 in Sweden Central; verify exact metadata against `infra\models\model-spec.json` |
+| Direct inference operator role / authorized RBAC administrator | Gateway identity roles do not authorize the human verifier | Assign operator reviewed inference roles only at the profile's account(s); verify direct smoke without exporting tokens |
 | Private SQL route/DDL / network and SQL administrators | Laptop/public SCM cannot administer private SQL; runtime identities must not get DDL | Follow private initialization below; verify migration head, scoped users and runtime `/ready`; then attest |
 | Fresh TLS certificate / certificate and vault administrators | CA approval, private-key custody and renewal are external | Issue a new certificate for the new hostname, import through an approved private vault route, verify HTTPS/backend/certificate retrieval and renewal ownership; then attest |
 | Guarded/signed-in acceptance / customer pilot owner | Anonymous probes cannot prove authorization or protection | Owned test subscription, guarded verifier and real Entra customer/admin journeys; then attest, apply pilot and complete playground acceptance |
@@ -248,11 +364,10 @@ ambiguous application by deleting it or assigning ownership automatically.
 Default execution is an **already approved private-connected Windows operator
 host**, not temporary runtime-identity elevation or public SQL firewall access.
 It needs private DNS/1433, the configured Entra SQL administrator authority, ODBC
-Driver 18, the repository/package and authorized access to the remote Terraform
-state for this environment (plus protected local configuration and backups).
+Driver 18, the repository/package and protected local state for this environment.
 If no such route exists, network administrators must supply one; deployment stops.
 Securely transfer the isolated customer state/configuration if moving hosts, ensure
-one writer, and preserve custody/backup. No VM/NAT is provisioned as a shortcut.
+one writer, and preserve custody/backup. The default action never provisions a host.
 
 After `platform`, run on that host:
 
@@ -273,7 +388,55 @@ operation, plus actual Function access before enabling ingestion. SQL admin
 success and SCM TCP tests are not runtime proof. Set `private_sql_initialized`
 only after this verification.
 
+An explicitly approved alternative is the disposable Australia East runner in
+`infra/sql-runner`, using separate protected local Terraform state, a dedicated
+managed identity, private-only NIC, denied inbound access and temporary NAT
+outbound. It does not share the API/ingestion identities. Build
+`scripts/deployment/Dockerfile.sql-init` with `API_IMAGE` set to the deployment's
+immutable API image digest. The image reuses the existing migrations and scoped
+bootstrap script; no operator tokens or SQL passwords are supplied.
+
+Validate and inspect the complete runner plan before provisioning. After applying,
+save `terraform output -json` as `sql-runner-output.json` in the protected
+environment, and invoke:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.deployment.sql_runner `
+  --config .deployment\customer.json --environment .deployment\<prefix> `
+  --runner-output .deployment\<prefix>\sql-runner-output.json `
+  --image <registry>/aiflux-sql-init@sha256:<digest>
+```
+
+This action **temporarily replaces the logical server Entra administrator** with
+the dedicated migration identity, after private DNS/TCP and image checks. Obtain
+explicit authorization for this server-wide elevation. It journals the original
+administrator before changing it and restores it in `finally`. The privilege has
+no automatic expiry: keep the operator host connected until restoration is
+verified. After interruption, rerun the same command with `--recover`; it refuses
+unexpected third-party administrator changes. Never remove an unresolved journal
+to force another migration. Failed DDL requires review before retrying.
+
+Require the bound migration result, administrator restoration, fresh runner login
+denial, then API `/ready`. Inspect a destroy plan **only for the isolated runner
+state**, and remove the temporary VM/disk/NIC, identity/role, subnet and NAT/IP.
+Retain recovery/evidence files; deallocating a VM does not stop NAT/IP/disk charges.
+This alternative does not open public SQL, relax runtime DDL denies, enable
+ingestion or certify signed-in chat/TLS acceptance.
+
 ### DNS and fresh TLS
+
+If governance already attaches a network security group to the Application Gateway
+subnet, set optional `app_gateway_existing_nsg_name` to its name in the same resource
+group. Review and import only the existing subnet/NSG association into the correct
+customer state before applying; do not replace or adopt the governance NSG.
+Terraform adds separately managed `AIFLUX*` gateway ingress rules and preserves
+the existing association. Retain this setting through every later phase.
+
+The customer launcher sets `dev_portals_operator_only=true` for candidate/pilot:
+direct App Service origins keep default Deny with only the operator and gateway
+subnet permitted. The raw Terraform flag defaults to false to preserve historical
+explicit direct-public development deployments; enabling the guarded adapter
+through the launcher does not authorize public origin access.
 
 `edge-bootstrap` creates a new Azure public IP and DNS label in this customer
 state. Confirm the resulting FQDN resolves to that IP. The customer CA/certificate
@@ -296,15 +459,59 @@ complete edge runtime verification after candidate apply. The historical ACME he
 is not invoked automatically: its development secret/temporary-startup mechanism
 is not a general customer renewal design. Public edge remains gated.
 
+For explicitly authorized one-shot Let's Encrypt issuance, first apply a reviewed
+bootstrap plan with `acme_http01_enabled=true`. This also mounts App Service
+storage on the API so the temporary SCM script and the challenge directory are
+visible in its private-integrated container. Run `infra/scripts/issue-edge-tls.py`
+with `--agree-terms` and `--approve-secret-scoped-temporary-writer`, staging
+before production, using the exact customer subscription/app/principal/vault/
+hostname and a protected evidence directory. Production grants only temporary
+Secrets Officer on `secrets/aiflux-dev-tls`, journals its role ID before creation,
+and imports the new PFX in memory. Startup and role removal are checked afterward.
+Keep the journal; an interrupted local process has no automatic cloud rollback.
+Recover its recorded startup/role before retrying an unrestored journal.
+
+The one-shot helper is also the manual renewal procedure: the operator contact
+owns checking certificate expiry, arranging renewal before the last 30 days,
+temporarily re-enabling HTTP-01/storage in a reviewed plan, running production
+issuance under change control and restoring the normal settings. Use the same
+versionless secret URI, verify gateway certificate refresh and actual HTTPS chain/
+expiry, and retain evidence. This is manual renewal, not a scheduled service.
+Disable `acme_http01_enabled` again in the subsequent candidate/pilot plan.
+
 ### Guarded acceptance, admin settings and ingestion
+
+If the optional MISE sidecar cannot run, explicit
+`mise_direct_jwt_enabled=true` selects the existing direct Entra JWT signature
+validation branch. It still verifies signed claims, issuer, audience, expiry,
+delegated scope and SQL organization/member approval. The optional sidecar ARM
+configuration is retained to avoid an unapproved deletion; this setting is not
+a runtime fallback and does not certify MISE compliance. Verify real signed-in
+API requests after changing it, and retain the setting through later phases.
+
+The managed `llm-content-safety` policy rejects severity equal to its threshold:
+threshold `0` can reject even benign severity-zero text. Live-trace a benign
+bounded request before accepting the gateway. Do not bypass inspection or mark
+the pilot accepted if it fails. An approved threshold `1` allows severity zero
+while blocking every positive severity; changing a safety threshold requires
+explicit operator approval and full-plan validation.
+Persist that approval in customer configuration as
+`dev_openai_content_safety_threshold: 1`; the launcher carries it through
+candidate, pilot and ingestion. Omission preserves legacy threshold `0`.
 
 At candidate, direct routes exist but `/api/models` remains gated. Use the normal
 signed-in key-management flow or, if the portal's catalog-dependent UI is not yet
 available, an approved interactive delegated REST client calling the existing
-`POST /api/subscriptions` with `{"name":"Pilot acceptance","team":"Pilot"}` and a
+`POST /api/admin/subscriptions` as an IDS admin with
+`{"organization_id":"<target-org-uuid>","name":"Pilot acceptance","team":"Pilot"}` and a
 fresh UUID `Idempotency-Key`. This endpoint does not require catalog acceptance:
 it commits SQL ownership before activating the adapter-product APIM key. Retain the
 same idempotency key on retry, or reconcile its existing failed subscription.
+With initialized versioned controls, creation automatically refreshes membership
+using unchanged published settings. Check `gateway_access` as well as APIM
+`state`; pending publication is not usable-access success. Reconcile the
+subscription to retry its membership refresh. Resolve unrelated pending settings
+or drift in Gateway settings rather than automatically approving them.
 Do not manually insert SQL ownership, create unowned smoke subscriptions or expose
 bearer/APIM keys in CLI arguments or logs. Keep paid calls bounded.
 
@@ -335,6 +542,17 @@ review. See [publication/retry/history](control-plane.md#admin-managed-gateway-s
 `published` is management readback, not atomic/live enforcement. For urgent
 tightening, use the existing reviewed inference gate before publication and
 measure live enforcement after propagation. Reruns preserve administrator settings.
+
+For the new team/subscription limits and separate Content Safety settings page,
+prefer the [provision-before-enforcement workflow](infrastructure.md#versioned-controls-rollout).
+Optional customer keys `admin_settings_provisioned`, `gateway_controls_v2_enabled`,
+`protected_material_available`, `monthly_request_quota_available`,
+`safety_relaxation_allowed` and `gateway_max_rpm` are validated by the launcher.
+They do not authorize activation, raise model capacity or change current protected
+deployment inputs. Migrate through `0003`, publish an explicit baseline while
+enforcement remains off, and separately approve policy/capability acceptance and
+counter-namespace cutover. Never flip capability assertions merely to enable a
+disabled UI control.
 
 Ingestion is intentionally separate from `deploy`. After owned telemetry,
 private Function SQL/storage access, metadata-only logging and reviewed prices

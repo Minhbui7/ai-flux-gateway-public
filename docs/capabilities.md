@@ -81,7 +81,7 @@ revalidate when relevant behavior changes.
 
 ## Proposed and excluded
 
-#10 / [PR #14](https://github.com/ajanakiraman_microsoft/ai-flux-gateway/pull/14)
+#10 / PR #14 (private historical reference)
 adds model filtering/discovery, collapsed transactions and pricing disclosure;
 it is not merged baseline behavior here. #9 admin safety/limit editing, #11
 customer one-click deployment and #8 stateless Auto classification are proposed.

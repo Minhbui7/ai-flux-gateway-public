@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     apim_resource_id: str = ""
     apim_product_id: str = "aiflux"
     gateway_settings_scopes: list[Literal["dev-openai", "dev-unified"]] = []
+    gateway_controls_v2_enabled: bool = False
+    gateway_protected_material_available: bool = False
+    gateway_monthly_request_quota_available: bool = False
+    gateway_safety_relaxation_allowed: bool = False
+    gateway_enforcement_enabled: bool = False
+    gateway_max_rpm: int = Field(default=2, ge=1, le=100000)
+    gateway_initial_safety_threshold: int = Field(default=1, ge=0, le=7)
     log_workspace_id: str = ""
     catalog_path: Path = Path("gateway/catalog/models.json")
     catalog_configured: bool = False

@@ -12,22 +12,26 @@ variable "location" {
   type        = string
 }
 
+variable "deployment_profile" {
+  description = "Legacy two-region topology or Australia East Luna pilot with explicitly accepted existing budget models."
+  type        = string
+  default     = "legacy"
+  validation {
+    condition = (
+      contains(["legacy", "australiaeast-luna"], var.deployment_profile) &&
+      (var.deployment_profile != "australiaeast-luna" ||
+        (var.location == "australiaeast" && coalesce(var.sql_location, var.location) == "australiaeast" &&
+      length(setsubtract(setunion(var.dev_unified_candidate_model_aliases, var.dev_unified_accepted_model_aliases), toset(["DeepSeek-V4-Flash", "gpt-5.4-nano"]))) == 0))
+    )
+    error_message = "Australia East requires local platform/SQL and permits only explicitly opted-in existing DeepSeek-V4-Flash/gpt-5.4-nano additions."
+  }
+}
+
 variable "sql_location" {
   description = "Azure SQL server/database region; defaults effectively to location when unset."
   type        = string
   default     = null
   nullable    = true
-}
-
-variable "model_location" {
-  description = "Primary Foundry/Language region, independent of gateway/apps. Null preserves existing root behavior; guided pilots explicitly pin eastus."
-  type        = string
-  default     = null
-  nullable    = true
-  validation {
-    condition     = var.model_location == null ? true : var.model_location == "eastus"
-    error_message = "The pinned primary Foundry model contracts require eastus."
-  }
 }
 
 variable "name_prefix" {
@@ -40,12 +44,6 @@ variable "name_prefix" {
 
 variable "deployment_approved" {
   description = "Explicit cost/config approval. Does NOT enable inference."
-  type        = bool
-  default     = false
-}
-
-variable "manual_rbac_verified" {
-  description = "Operator attests an authorized administrator provisioned and verified the documented manual RBAC grants before runtime/inference or edge rollout. Not needed for prerequisites."
   type        = bool
   default     = false
 }
@@ -72,6 +70,12 @@ variable "acme_http01_enabled" {
   default     = false
 }
 
+variable "mise_direct_jwt_enabled" {
+  description = "Explicitly use the existing direct Entra JWT signature validation path even if the optional sidecar ARM configuration is retained. Does not certify MISE compliance."
+  type        = bool
+  default     = false
+}
+
 variable "app_gateway_existing_nsg_name" {
   description = "Existing governance-attached AppGW subnet NSG; preserve its association/rules and add only named AIFLUX ingress rules."
   type        = string
@@ -85,6 +89,34 @@ variable "publisher_email" {
 variable "publisher_name" {
   type    = string
   default = "Singtel IDS"
+}
+
+variable "monthly_budget" {
+  description = "Optional resource-group budget in billing currency, with actual-cost alerts at 50/80/100 percent. Import an existing verified budget before managing it; this is not a spending cap."
+  type = object({
+    name            = string
+    amount          = number
+    start_date      = string
+    end_date        = string
+    contact_emails  = list(string)
+    import_existing = optional(bool, false)
+  })
+  default = null
+  validation {
+    condition = var.monthly_budget == null ? true : try(
+      can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$", var.monthly_budget.name)) &&
+      var.monthly_budget.amount > 0 &&
+      can(regex("^[0-9]{4}-[0-9]{2}-01T00:00:00Z$", var.monthly_budget.start_date)) &&
+      can(regex("^[0-9]{4}-[0-9]{2}-01T00:00:00Z$", var.monthly_budget.end_date)) &&
+      timecmp(var.monthly_budget.end_date, var.monthly_budget.start_date) > 0 &&
+      length(var.monthly_budget.contact_emails) >= 1 &&
+      length(var.monthly_budget.contact_emails) <= 5 &&
+      length(distinct(var.monthly_budget.contact_emails)) == length(var.monthly_budget.contact_emails) &&
+      alltrue([for email in var.monthly_budget.contact_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email))]),
+      false
+    )
+    error_message = "Budget requires a valid name, positive amount, increasing first-of-month UTC dates and 1-5 unique contact email addresses."
+  }
 }
 
 variable "model_backends_file" {
@@ -307,6 +339,7 @@ variable "apps" {
     registry_url = string
     port         = number
     health_path  = string
+    always_on    = optional(bool, true)
   }))
   validation {
     condition = !contains(["platform", "edge-bootstrap", "edge-candidate", "public-edge"], var.deployment_stage) ? true : (
@@ -318,7 +351,7 @@ variable "apps" {
 }
 
 variable "registry_resource_id" {
-  description = "Existing publicly reachable authenticated ACR unless create_container_registry is selected; an administrator must grant app identities AcrPull manually."
+  description = "Existing publicly reachable authenticated ACR unless create_container_registry is selected; app identities get AcrPull."
   type        = string
   default     = ""
   validation {
@@ -393,6 +426,13 @@ variable "dev_price_bootstrap_enabled" {
     condition     = !var.dev_price_bootstrap_enabled || (var.dev_direct_portals_enabled && var.dev_catalog_accepted)
     error_message = "Development price bootstrap requires the accepted development catalog and direct development deployment."
   }
+
+}
+
+variable "dev_portals_operator_only" {
+  description = "Retain exact operator and Application Gateway access restrictions while using the guarded direct-origin adapter. The customer launcher enables this for candidate/pilot."
+  type        = bool
+  default     = false
 }
 
 variable "dev_portal_origins" {
@@ -516,9 +556,10 @@ variable "dev_unified_candidate_model_aliases" {
   validation {
     condition = length(setsubtract(var.dev_unified_candidate_model_aliases, toset([
       "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "Kimi-K2.6",
-      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5"
+      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5",
+      "DeepSeek-V4-Flash", "gpt-5.4-nano"
     ]))) == 0
-    error_message = "Only the eight explicitly approved preview aliases may be temporary adapter candidates."
+    error_message = "Only pinned preview or existing budget-model aliases may be temporary adapter candidates."
   }
 }
 
@@ -529,9 +570,10 @@ variable "dev_unified_accepted_model_aliases" {
   validation {
     condition = length(setsubtract(var.dev_unified_accepted_model_aliases, toset([
       "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "Kimi-K2.6",
-      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5"
+      "DeepSeek-V4-Flash-0731", "DeepSeek-V4-Pro", "claude-sonnet-5-5", "claude-opus-5-5",
+      "DeepSeek-V4-Flash", "gpt-5.4-nano"
     ]))) == 0
-    error_message = "Only the eight explicitly approved preview aliases may be enabled on the guarded adapter."
+    error_message = "Only pinned preview or accepted existing budget-model aliases may be enabled on the guarded adapter."
   }
 }
 

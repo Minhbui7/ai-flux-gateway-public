@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.deployment.launcher import Runner  # noqa: E402
 
 SPEC_PATH = Path(__file__).with_name("model-spec.json")
 EVIDENCE_PATH = Path(__file__).with_name("model-backends.json")
@@ -21,7 +24,10 @@ MAX_DIRECT_SMOKE_COMPLETION_TOKENS = 4096
 
 
 def az(*args: str) -> dict[str, Any]:
-    return json.loads(subprocess.check_output(["az.cmd", *args, "-o", "json"]))
+    result = Runner()(["az", *args, "--only-show-errors", "-o", "json"])
+    if not isinstance(result, dict):
+        raise ValueError("Azure CLI returned an unexpected response shape")
+    return result
 
 
 def get_json(
@@ -235,8 +241,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--subscription", required=True)
     parser.add_argument("--resource-group", required=True)
-    parser.add_argument("--eastus-account", required=True)
-    parser.add_argument("--sweden-account", required=True)
+    parser.add_argument("--eastus-account")
+    parser.add_argument("--sweden-account")
+    parser.add_argument(
+        "--australiaeast-account", help="Australia East profile; excludes legacy accounts."
+    )
     parser.add_argument("--output", type=Path, default=EVIDENCE_PATH)
     parser.add_argument("--model-alias", action="append", help="Verify only these exact pinned aliases.")
     parser.add_argument(
@@ -255,6 +264,19 @@ def main() -> None:
         help="Make one bounded, non-sensitive direct request per found deployment.",
     )
     args = parser.parse_args()
+    if args.australiaeast_account:
+        allowed = {"gpt-5.6-luna", "DeepSeek-V4-Flash", "gpt-5.4-nano"}
+        if (
+            args.eastus_account or args.sweden_account
+            or not args.model_alias or "gpt-5.6-luna" not in args.model_alias
+            or not set(args.model_alias) <= allowed
+            or len(args.model_alias) != len(set(args.model_alias))
+        ):
+            parser.error(
+                "Australia East requires Luna and only opted-in existing budget aliases, no legacy accounts."
+            )
+    elif not args.eastus_account or not args.sweden_account:
+        parser.error("Supply both legacy accounts or the Australia East Luna-only account.")
 
     management_token = az(
         "account",
@@ -298,6 +320,10 @@ def main() -> None:
         ("eastus", args.eastus_account),
         ("swedencentral", args.sweden_account),
     )
+    if args.australiaeast_account:
+        accounts = (("australiaeast", args.australiaeast_account),)
+        specs = {alias: {**spec, "regions": ["australiaeast"]} for alias, spec in specs.items()}
+        previous = {}
     for region, account in accounts:
         resource_id = (
             f"/subscriptions/{args.subscription}/resourceGroups/{args.resource_group}"
