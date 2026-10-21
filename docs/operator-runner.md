@@ -16,8 +16,8 @@ environment example keeps `deployment_approved=false`. A machine is **not** an o
 GitHub runner: Azure CLI, Terraform, runner binaries, registration and live acceptance
 remain separate operator work.
 
-The root pins Terraform `~>1.16.0` and AzureRM `5.9.0`; the main/state roots additionally
-pin AzAPI `2.13.0`. Local checks use Terraform `1.16.5` and mock all Azure providers.
+The root pins Terraform `1.12.1` and AzureRM `5.9.0`; the main/state roots additionally
+pin AzAPI `2.13.0`. Local checks use Terraform `1.12.1` and mock all Azure providers.
 The existing RG `rg-aiflux-fdpo-dev` in subscription
 `4d75ed7f-75ab-4db6-b1f3-263f240d1450` is a data source, not managed/imported/deleted.
 The former design assumed Standard v2/private APIM and private apps; that is not
@@ -156,7 +156,7 @@ az vm run-command invoke `
 
 Check agent readiness/cloud-init status before retrying; do not open SSH to repair
 egress. Install Azure CLI from Microsoft's signed package repository, Terraform
-`1.16.5` from checksum/signature-verified HashiCorp packages, and an explicitly selected
+`1.12.1` from checksum/signature-verified HashiCorp packages, and an explicitly selected
 GitHub runner Linux x64 release using its published SHA-256. Recheck disk capacity and
 Docker builds: B2s is burstable and a 32 GiB disk can be insufficient for image caches.
 Run the runner as `runner`, not root; do not install unrelated toolchains by default.

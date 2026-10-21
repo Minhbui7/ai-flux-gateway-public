@@ -37,6 +37,8 @@ FIELDS = {
     "subscription_id",
     "resource_group_name",
     "name_prefix",
+    "location",
+    "model_location",
     "publisher_name",
     "publisher_email",
     "bootstrap_object_id",
@@ -106,7 +108,8 @@ def digest(data: bytes) -> str:
 def load_config(path: Path) -> dict[str, Any]:
     config = read_json(path)
     require(
-        isinstance(config, dict) and set(config) == FIELDS, "Use exactly the example configuration fields."
+        isinstance(config, dict) and set(config) - {"backend"} == FIELDS,
+        "Use exactly the example configuration fields, with optional backend.",
     )
     for key in FIELDS - {"admin_settings_enabled", "attestations"}:
         require(isinstance(config[key], str), f"{key} must be a string.")
@@ -121,8 +124,38 @@ def load_config(path: Path) -> dict[str, Any]:
     require(bool(re.fullmatch(r"[a-z][a-z0-9-]{2,18}", config["name_prefix"])), "Invalid name_prefix.")
     require(bool(re.fullmatch(r"[A-Za-z0-9_.()-]{1,90}", config["resource_group_name"])), "Invalid RG name.")
     require(
-        config["sql_location"] in ("eastus", "australiaeast"), "SQL region must be eastus or australiaeast."
+        config["location"] in ("eastus", "southeastasia"),
+        "Gateway/app location must be eastus or southeastasia.",
     )
+    require(config["model_location"] == "eastus", "Pinned primary model_location must remain eastus.")
+    require(
+        config["sql_location"] in ("eastus", "australiaeast", "southeastasia"),
+        "SQL region must be eastus, australiaeast or southeastasia.",
+    )
+    if "backend" in config:
+        backend = config["backend"]
+        require(
+            isinstance(backend, dict)
+            and set(backend) == {
+                "resource_group_name", "storage_account_name", "container_name", "main_key", "models_key"
+            }
+            and all(isinstance(value, str) for value in backend.values()),
+            "backend must specify existing RG/account/container and separate main_key/models_key strings.",
+        )
+        require(
+            bool(re.fullmatch(r"[A-Za-z0-9_.()-]{1,90}", backend["resource_group_name"]))
+            and bool(re.fullmatch(r"[a-z0-9]{3,24}", backend["storage_account_name"]))
+            and backend["container_name"] == "tfstate",
+            "Use an existing valid storage account and the separate tfstate container.",
+        )
+        for key in ("main_key", "models_key"):
+            require(
+                bool(re.fullmatch(r"[a-z0-9][a-z0-9/_.-]{0,255}\.tfstate", backend[key]))
+                and ".." not in backend[key]
+                and backend[key].startswith(config["name_prefix"] + "/"),
+                "State keys must be .tfstate paths namespaced by name_prefix/; no parent traversal.",
+            )
+        require(backend["main_key"] != backend["models_key"], "Main/models backend keys must differ.")
     require(config["network_profile"] in ("10.240", "10.241"), "Network profile must be 10.240 or 10.241.")
     require(
         bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", config["dns_label"])), "Invalid DNS label."
@@ -221,7 +254,57 @@ class Launcher:
 
     @property
     def hostname(self) -> str:
-        return self.config["dns_label"] + ".eastus.cloudapp.azure.com"
+        return self.config["dns_label"] + "." + self.config["location"] + ".cloudapp.azure.com"
+
+    def environment_binding(self) -> dict[str, Any]:
+        return {
+            key: self.config.get(key)
+            for key in (
+                "tenant_id", "subscription_id", "resource_group_name", "name_prefix",
+                "location", "model_location", "sql_location", "backend",
+            )
+        }
+
+    def state_args(self, root: str) -> list[str]:
+        require(bool(self.config.get("backend")), "Local state is disabled; configure Azure Blob state.")
+        return []
+
+    def backend_config(self, root: str) -> dict[str, Any]:
+        backend = self.config["backend"]
+        return {
+            "resource_group_name": backend["resource_group_name"],
+            "storage_account_name": backend["storage_account_name"],
+            "container_name": backend["container_name"],
+            "key": backend["models_key" if root == "models" else "main_key"],
+            "tenant_id": self.config["tenant_id"],
+            "subscription_id": self.config["subscription_id"],
+            "use_azuread_auth": True,
+            "use_cli": True,
+            "use_oidc": False,
+            "use_msi": False,
+        }
+
+    def prepare_backend(self) -> None:
+        # No implicit migration/adoption. These checks run before any Terraform operation.
+        binding_path = self.directory / "backend-binding.json"
+        binding = self.environment_binding()
+        if binding_path.exists():
+            require(read_json(binding_path) == binding, "Backend/region binding changed; separate migration review required.")
+            return
+        require(
+            not any(self.directory.glob("*.tfstate*"))
+            and not any(self.directory.glob("*-data/terraform.tfstate")),
+            "Existing local state/backend metadata; remote migration requires separate review.",
+        )
+        backend = self.config["backend"]
+        for key in ("main_key", "models_key"):
+            exists = self.az(
+                "storage", "blob", "exists", "--account-name", backend["storage_account_name"],
+                "--container-name", backend["container_name"], "--name", backend[key],
+                "--auth-mode", "login",
+            )
+            require(exists.get("exists") is False, "Remote state already exists; adoption requires separate review.")
+        write_json(binding_path, binding)
 
     def az(self, *args: str) -> Any:
         return self.run(
@@ -237,11 +320,43 @@ class Launcher:
         )
 
     def tf(self, root: str, *args: str, json_output: bool = False) -> Any:
-        # TF_DATA_DIR isolates providers/backend metadata between customers and roots.
+        require(root in ("terraform", "models"), "Unknown Terraform root.")
+        remote = bool(self.config.get("backend"))
+        require(remote, "This deployment requires the configured Azure Blob backend; local state is disabled.")
+        require(
+            not any(
+                key.startswith("TF_CLI_ARGS") or key == "TF_WORKSPACE"
+                or key in {"ARM_ACCESS_KEY", "ARM_SAS_TOKEN", "ARM_CLIENT_SECRET", "ARM_CLIENT_ID",
+                           "ARM_USE_MSI", "ARM_USE_OIDC", "ARM_USE_AKS_WORKLOAD_IDENTITY"}
+                for key in os.environ
+            ),
+            "Clear Terraform CLI/workspace overrides and ARM credential/auth overrides; use Azure CLI login.",
+        )
+        # Serialize launcher operations in this checkout to avoid shared root/data-dir collisions.
         old = os.environ.get("TF_DATA_DIR")
         os.environ["TF_DATA_DIR"] = str(self.directory / (root + "-data"))
         try:
-            return self.run(["terraform", f"-chdir={ROOT / 'infra' / root}", *args], json_output=json_output)
+            with environment_lock(ROOT / ".deployment" / "terraform-root-lock"):
+                source = ROOT / "infra" / root
+                declared_remote = any(
+                    'backend "azurerm"' in path.read_text(encoding="utf-8")
+                    for path in source.glob("*.tf")
+                )
+                require(declared_remote, "The Terraform root must declare the Azure Blob backend.")
+                require(
+                    not any(source.glob("*override.tf")) and not any(source.glob("*override.tf.json")),
+                    "Terraform override collision; remove only a verified stale override after review.",
+                )
+                self.prepare_backend()
+                if args[0] == "init":
+                    config_path = self.directory / (root + ".backend.hcl")
+                    content = "".join(
+                        f"{key} = {json.dumps(value)}\n"
+                        for key, value in self.backend_config(root).items()
+                    )
+                    config_path.write_text(content, encoding="ascii")
+                    args = (*args, f"-backend-config={config_path}")
+                return self.run(["terraform", f"-chdir={source}", *args], json_output=json_output)
         finally:
             if old is None:
                 os.environ.pop("TF_DATA_DIR", None)
@@ -293,7 +408,7 @@ class Launcher:
 
     def preflight(self) -> None:
         version = self.run(["terraform", "version", "-json"])
-        require(bool(re.fullmatch(r"1\.16\.\d+", version["terraform_version"])), "Use Terraform 1.16.x.")
+        require(version["terraform_version"] == "1.12.1", "Use Terraform 1.12.1.")
         require(sys.version_info >= (3, 11), "Use Python 3.11 or newer.")
         account = self.az("account", "show")
         require(
@@ -339,7 +454,8 @@ class Launcher:
         print("Dedicated registrations configured. Directory consent remains subject to customer policy.")
 
     def outputs(self) -> dict[str, Any]:
-        return self.tf("terraform", "output", f"-state={self.main_state}", "-json", json_output=True)
+        self.tf("terraform", "init", "-input=false")
+        return self.tf("terraform", "output", *self.state_args("terraform"), "-json", json_output=True)
 
     def main_inputs(self, phase: str) -> dict[str, Any]:
         self.approved("cost_network_and_permissions_reviewed")
@@ -349,7 +465,8 @@ class Launcher:
             "subscription_id": c["subscription_id"],
             "resource_group_name": c["resource_group_name"],
             "name_prefix": self.prefix,
-            "location": "eastus",
+            "location": c["location"],
+            "model_location": c["model_location"],
             "sql_location": c["sql_location"],
             "publisher_name": c["publisher_name"],
             "publisher_email": c["publisher_email"],
@@ -516,6 +633,8 @@ class Launcher:
                 "name_prefix",
                 "bootstrap_object_id",
                 "dns_label",
+                "location",
+                "model_location",
             )
         }
         return digest(
@@ -597,7 +716,7 @@ class Launcher:
             "plan",
             "-input=false",
             "-lock-timeout=30s",
-            f"-state={self.models_state if root == 'models' else self.main_state}",
+            *self.state_args(root),
             f"-var-file={var_file}",
             f"-out={plan_file}",
         )
@@ -649,6 +768,7 @@ class Launcher:
         )
         require(review["plan_hash"] == digest(plan_file.read_bytes()), "Saved plan changed; replan.")
         require(approval == review["approval"], "Explicit complete-plan approval token is required.")
+        self.tf(review["root"], "init", "-input=false")
         # A failed/interrupted apply invalidates approval; partial state must be refreshed/replanned.
         review_path.unlink()
         self.tf(
@@ -657,7 +777,7 @@ class Launcher:
             "-input=false",
             "-lock-timeout=30s",
             "-parallelism=1",
-            f"-state={self.models_state if phase == 'models' else self.main_state}",
+            *self.state_args(review["root"]),
             str(plan_file),
         )
         write_json(
@@ -942,18 +1062,22 @@ def main() -> None:
         directory = ROOT / ".deployment" / config["name_prefix"]
         with environment_lock(directory):
             binding_path = directory / "environment.json"
-            binding = {
-                key: config[key]
-                for key in ("tenant_id", "subscription_id", "resource_group_name", "name_prefix")
-            }
-            if binding_path.exists():
-                require(
-                    read_json(binding_path) == binding,
-                    "Local state directory belongs to another environment.",
-                )
-            else:
-                write_json(binding_path, binding)
             launcher = Launcher(config, directory)
+            binding = launcher.environment_binding()
+            if binding_path.exists():
+                previous = read_json(binding_path)
+                # Upgrade legacy local East US bindings only; never implicitly migrate them.
+                if set(previous) == {"tenant_id", "subscription_id", "resource_group_name", "name_prefix"}:
+                    require(
+                        config["location"] == "eastus" and not config.get("backend"),
+                        "Legacy local environment requires a separate region/backend migration review.",
+                    )
+                    previous = {**binding, **previous}
+                require(
+                    previous == binding,
+                    "Environment/backend/region changed; separate migration review required.",
+                )
+            write_json(binding_path, binding)
             if args.action == "plan":
                 launcher.plan(args.phase)
             elif args.action == "apply":

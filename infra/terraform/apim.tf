@@ -379,8 +379,7 @@ resource "azapi_resource" "dev_openai_policy" {
   depends_on = [
     terraform_data.dev_openai_gate,
     azapi_resource.dev_model_pool,
-    azapi_resource.dev_content_safety_backend,
-    azurerm_role_assignment.ai_user
+    azapi_resource.dev_content_safety_backend
   ]
 }
 

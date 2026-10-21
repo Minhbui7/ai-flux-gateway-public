@@ -274,7 +274,7 @@ resource "azurerm_application_gateway" "main" {
   }
   depends_on = [
     terraform_data.approval,
-    azurerm_role_assignment.edge_certificate,
+    # Elevated privileges required for role assignment; certificate read grant is a manual checkpoint.
     terraform_data.sql_firewall_gate,
     azurerm_subnet_network_security_group_association.appgw,
     azurerm_network_security_rule.appgw_platform,

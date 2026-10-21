@@ -36,6 +36,9 @@ resource "azapi_resource" "gateway_settings" {
   }
 }
 
+# Elevated privileges required for role assignment
+# Manual RBAC handoff also applies when admin-managed settings are enabled.
+/*
 resource "azurerm_role_definition" "gateway_settings" {
   count       = var.dev_admin_settings_enabled ? 1 : 0
   name        = "${local.prefix}-gateway-settings"
@@ -56,3 +59,4 @@ resource "azurerm_role_assignment" "gateway_settings" {
   role_definition_id = azurerm_role_definition.gateway_settings[0].role_definition_resource_id
   principal_id       = azurerm_user_assigned_identity.identity["api"].principal_id
 }
+*/

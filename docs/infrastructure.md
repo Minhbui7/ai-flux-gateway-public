@@ -157,7 +157,7 @@ team provision remains SQL-owned; use portal Reconcile after fixing APIM rather
 than creating duplicate requests. The original single-key `/dev/v1` product and
 each adapter subscription's inference bounds are unchanged.
 
-Use the existing protected local state and ignored deployed inputs. Review the
+Use the existing protected state and ignored deployed inputs. Review the
 full saved plan before applying; no `-target`. Pin all three successful ACR build
 outputs by digest, specifying both subscription and resource group explicitly
 to avoid shared CLI defaults. Final edge TLS, native translation and
@@ -385,9 +385,11 @@ Live APIM verification returned Product state `notPublished` with subscription
 and approval required; anonymous `/v1/models` returned 503, retaining the
 fail-closed disabled gateway rather than enabling inference.
 
-The main root pins Terraform `~>1.16.0` (locally `1.16.5`), AzureRM `5.9.0` and
-AzAPI `2.13.0`. Providers do not auto-register resource providers. Use local Azure CLI
-authentication and protected local state; do not set shared Azure CLI account defaults.
+The main root pins Terraform `1.12.1`, AzureRM `5.9.0` and
+AzAPI `2.13.0`. Providers do not auto-register resource providers. Use Azure CLI
+authentication and protected state; the main/model roots now
+use separate Azure Blob keys (see the customer deployment runbook). Do not set
+shared Azure CLI account defaults.
 
 ## Cumulative stages and resource inventory
 
@@ -526,16 +528,19 @@ P1v3/S0 and the approved isolated network. Complete externally verified inputs:
 
 Use an existing authorized Entra operator with Azure CLI; do not create identities
 or registrations merely to run Terraform. Explicitly pass the subscription to Azure
-commands and verify provider identity/subscription matches. Keep state/plan files on
-an **encrypted, access-controlled local disk**, excluded from source control and shared
-sync folders; Terraform local state is not itself encrypted. Back up securely and allow
-one writer only. No blob backend, state account, bootstrap or VM is mandatory today.
+commands and verify provider identity/subscription matches. The main and models
+roots now use a separately configured Azure Blob backend; use approved network
+access and Storage Blob Data Contributor on its private container/account. Keep
+saved plans and pre-migration local state backups on an encrypted, access-controlled
+local disk outside source control and shared sync folders. Back up securely and
+allow one writer only. No operator VM is mandatory for infrastructure planning.
 
 `infra\operator` and `infra\state` remain **optional deferred private-design artifacts**,
 validated locally but not prerequisites and not consumed by this public root.
-Their private backend/OIDC examples do not configure the main local backend.
-Any later remote-state migration requires a separate reviewed auth/firewall/locking plan;
-do not toggle or migrate ownership blindly after resources exist.
+Their private backend/OIDC examples do not configure the main/model backends.
+Any other environment's remote-state migration requires a separate reviewed
+auth/firewall/locking plan; do not toggle or migrate ownership blindly after
+resources exist.
 
 Use this reviewed operator route only after the recorded policy/entitlement
 blockers have approved resolutions. Do not repeatedly retry those failures:
