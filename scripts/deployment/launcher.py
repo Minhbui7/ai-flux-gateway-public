@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import shutil
@@ -24,6 +25,7 @@ from uuid import UUID
 ROOT = Path(__file__).resolve().parents[2]
 PHASES = ("prerequisites", "models", "platform", "edge-bootstrap", "candidate", "pilot", "ingestion")
 ALIASES = ("gpt-5.6-luna", "gpt-5.6-sol", "claude-haiku-5-5")
+BUDGET_ALIASES = ("DeepSeek-V4-Flash", "gpt-5.4-nano")
 ATTESTATIONS = {
     "cost_network_and_permissions_reviewed",
     "model_terms_and_quota_reviewed",
@@ -37,8 +39,6 @@ FIELDS = {
     "subscription_id",
     "resource_group_name",
     "name_prefix",
-    "location",
-    "model_location",
     "publisher_name",
     "publisher_email",
     "bootstrap_object_id",
@@ -108,29 +108,43 @@ def digest(data: bytes) -> str:
 def load_config(path: Path) -> dict[str, Any]:
     config = read_json(path)
     require(
-        isinstance(config, dict) and set(config) - {"backend"} == FIELDS,
-        "Use exactly the example configuration fields, with optional backend.",
+        isinstance(config, dict)
+        and set(config)
+        - {
+            "deployment_profile",
+            "backend",
+            "location",
+            "model_location",
+            "manual_rbac_verified",
+            "app_gateway_existing_nsg_name",
+            "mise_direct_jwt_enabled",
+            "dev_openai_content_safety_threshold",
+            "additional_model_aliases",
+            "app_always_on",
+            "monthly_budget",
+            "admin_settings_provisioned",
+            "gateway_controls_v2_enabled",
+            "protected_material_available",
+            "monthly_request_quota_available",
+            "safety_relaxation_allowed",
+            "gateway_max_rpm",
+        }
+        == FIELDS,
+        "Use exactly the example configuration fields.",
     )
-    for key in FIELDS - {"admin_settings_enabled", "attestations"}:
-        require(isinstance(config[key], str), f"{key} must be a string.")
-    for key in ("tenant_id", "subscription_id", "bootstrap_object_id", "sql_admin_object_id"):
-        try:
-            identifier = UUID(config[key])
-        except ValueError as error:
-            raise DeploymentError(f"{key} must be a UUID.") from error
-        require(
-            identifier.int != 0 and str(identifier) == config[key], f"Replace {key} with a lowercase UUID."
-        )
-    require(bool(re.fullmatch(r"[a-z][a-z0-9-]{2,18}", config["name_prefix"])), "Invalid name_prefix.")
-    require(bool(re.fullmatch(r"[A-Za-z0-9_.()-]{1,90}", config["resource_group_name"])), "Invalid RG name.")
     require(
-        config["location"] in ("eastus", "southeastasia"),
-        "Gateway/app location must be eastus or southeastasia.",
+        config.get("deployment_profile", "legacy") in ("legacy", "australiaeast-luna"),
+        "deployment_profile must be legacy or australiaeast-luna.",
     )
-    require(config["model_location"] == "eastus", "Pinned primary model_location must remain eastus.")
+    australian = config.get("deployment_profile", "legacy") == "australiaeast-luna"
+    region = "australiaeast" if australian else "eastus"
     require(
-        config["sql_location"] in ("eastus", "australiaeast", "southeastasia"),
-        "SQL region must be eastus, australiaeast or southeastasia.",
+        config.get("location", region) in (("australiaeast",) if australian else ("eastus", "southeastasia")),
+        "Gateway/app location is not supported by this deployment profile.",
+    )
+    require(
+        config.get("model_location", region) == region,
+        "Pinned primary model_location must match the profile.",
     )
     if "backend" in config:
         backend = config["backend"]
@@ -156,6 +170,117 @@ def load_config(path: Path) -> dict[str, Any]:
                 "State keys must be .tfstate paths namespaced by name_prefix/; no parent traversal.",
             )
         require(backend["main_key"] != backend["models_key"], "Main/models backend keys must differ.")
+    existing_nsg = config.get("app_gateway_existing_nsg_name", "")
+    require(type(config.get("manual_rbac_verified", False)) is bool, "manual_rbac_verified must be Boolean.")
+    for field in (
+        "admin_settings_provisioned", "gateway_controls_v2_enabled", "protected_material_available",
+        "monthly_request_quota_available", "safety_relaxation_allowed",
+    ):
+        require(type(config.get(field, False)) is bool, f"{field} must be Boolean.")
+    require(
+        type(config.get("gateway_max_rpm", 2)) is int and 1 <= config.get("gateway_max_rpm", 2) <= 100000,
+        "gateway_max_rpm must be an operator-approved integer from 1 through 100000.",
+    )
+    require(
+        not config.get("gateway_controls_v2_enabled", False)
+        or config.get("admin_settings_provisioned", False) or config.get("admin_settings_enabled", False),
+        "Versioned gateway controls require provisioned admin settings fragments.",
+    )
+    additional = config.get("additional_model_aliases", [])
+    require(
+        isinstance(additional, list)
+        and all(isinstance(alias, str) and alias in BUDGET_ALIASES for alias in additional)
+        and len(additional) == len(set(additional))
+        and (not additional or config.get("deployment_profile") == "australiaeast-luna"),
+        "additional_model_aliases must contain unique approved existing budget aliases for Australia East.",
+    )
+    threshold = config.get("dev_openai_content_safety_threshold", 0)
+    require(
+        type(threshold) is int and 0 <= threshold <= 7,
+        "dev_openai_content_safety_threshold must be an explicitly approved integer from 0 through 7.",
+    )
+    require(
+        type(config.get("mise_direct_jwt_enabled", False)) is bool,
+        "mise_direct_jwt_enabled must be Boolean.",
+    )
+    always_on = config.get("app_always_on", {})
+    require(
+        isinstance(always_on, dict)
+        and set(always_on) <= {"api", "customer", "admin"}
+        and all(type(value) is bool for value in always_on.values()),
+        "app_always_on must map api/customer/admin to Boolean values; omitted apps default to true.",
+    )
+    budget = config.get("monthly_budget")
+    if budget is not None:
+        require(
+            isinstance(budget, dict)
+            and set(budget) == {
+                "name", "amount", "start_date", "end_date", "contact_emails", "import_existing",
+            },
+            "monthly_budget requires exactly name, amount, start_date, end_date, "
+            "contact_emails and import_existing.",
+        )
+        require(
+            isinstance(budget["name"], str)
+            and bool(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}", budget["name"]))
+            and type(budget["amount"]) in (int, float)
+            and math.isfinite(budget["amount"])
+            and budget["amount"] > 0
+            and type(budget["import_existing"]) is bool,
+            "monthly_budget requires a valid name, positive finite amount and Boolean import_existing.",
+        )
+        dates = []
+        for key in ("start_date", "end_date"):
+            value = budget[key]
+            require(
+                isinstance(value, str)
+                and bool(re.fullmatch(r"\d{4}-\d{2}-01T00:00:00Z", value)),
+                f"monthly_budget.{key} must be first-of-month UTC, YYYY-MM-01T00:00:00Z.",
+            )
+            try:
+                dates.append(datetime.fromisoformat(value.replace("Z", "+00:00")))
+            except ValueError as error:
+                raise DeploymentError(f"monthly_budget.{key} must be a valid date.") from error
+        require(dates[1] > dates[0], "monthly_budget.end_date must follow start_date.")
+        emails = budget["contact_emails"]
+        require(
+            isinstance(emails, list)
+            and 1 <= len(emails) <= 5
+            and all(
+                isinstance(email, str) and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email))
+                for email in emails
+            )
+            and len(set(emails)) == len(emails),
+            "monthly_budget.contact_emails must contain 1-5 unique email addresses.",
+        )
+    require(
+        isinstance(existing_nsg, str)
+        and (
+            existing_nsg == ""
+            or bool(re.fullmatch(r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,78}[A-Za-z0-9_])?", existing_nsg))
+        ),
+        "app_gateway_existing_nsg_name must be an existing NSG name in this resource group, or empty.",
+    )
+    for key in FIELDS - {"admin_settings_enabled", "attestations"}:
+        require(isinstance(config[key], str), f"{key} must be a string.")
+    for key in ("tenant_id", "subscription_id", "bootstrap_object_id", "sql_admin_object_id"):
+        try:
+            identifier = UUID(config[key])
+        except ValueError as error:
+            raise DeploymentError(f"{key} must be a UUID.") from error
+        require(
+            identifier.int != 0 and str(identifier) == config[key], f"Replace {key} with a lowercase UUID."
+        )
+    require(bool(re.fullmatch(r"[a-z][a-z0-9-]{2,18}", config["name_prefix"])), "Invalid name_prefix.")
+    require(bool(re.fullmatch(r"[A-Za-z0-9_.()-]{1,90}", config["resource_group_name"])), "Invalid RG name.")
+    require(
+        config["sql_location"] in ("eastus", "australiaeast", "southeastasia"),
+        "SQL region must be eastus, australiaeast or southeastasia."
+    )
+    require(
+        config.get("deployment_profile") != "australiaeast-luna" or config["sql_location"] == "australiaeast",
+        "The Australia East profile requires SQL in australiaeast.",
+    )
     require(config["network_profile"] in ("10.240", "10.241"), "Network profile must be 10.240 or 10.241.")
     require(
         bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", config["dns_label"])), "Invalid DNS label."
@@ -208,7 +333,14 @@ class Runner:
         if executable is None:
             raise DeploymentError(f"Missing tool: {args[0]}. See docs/deployment.md.")
         # Do not print command output on failure: CLI/Graph/Terraform may include secrets.
-        result = subprocess.run([executable, *args[1:]], capture_output=True, check=False)
+        command = [executable, *args[1:]]
+        if os.name == "nt" and args[0] == "az" and Path(executable).suffix.lower() == ".cmd":
+            cli_python = Path(executable).parent.parent / "python.exe"
+            require(
+                cli_python.is_file(), "Cannot locate Azure CLI Python; repair the Azure CLI installation."
+            )
+            command = [str(cli_python), "-IBm", "azure.cli", *args[1:]]
+        result = subprocess.run(command, capture_output=True, check=False)
         require(
             result.returncode == 0,
             f"{args[0]} {args[1]} failed (exit {result.returncode}); "
@@ -253,21 +385,40 @@ class Launcher:
         return self.config["name_prefix"]
 
     @property
+    def australian(self) -> bool:
+        return self.config.get("deployment_profile", "legacy") == "australiaeast-luna"
+
+    @property
+    def location(self) -> str:
+        return self.config.get("location", "australiaeast" if self.australian else "eastus")
+
+    @property
+    def aliases(self) -> tuple[str, ...]:
+        return (
+            ALIASES[:1] + tuple(self.config.get("additional_model_aliases", []))
+            if self.australian
+            else ALIASES
+        )
+
+    @property
+    def model_root(self) -> str:
+        return "models-australiaeast" if self.australian else "models"
+
+    @property
     def hostname(self) -> str:
-        return self.config["dns_label"] + "." + self.config["location"] + ".cloudapp.azure.com"
+        return self.config["dns_label"] + f".{self.location}.cloudapp.azure.com"
 
     def environment_binding(self) -> dict[str, Any]:
-        return {
+        binding = {
             key: self.config.get(key)
             for key in (
                 "tenant_id", "subscription_id", "resource_group_name", "name_prefix",
                 "location", "model_location", "sql_location", "backend",
             )
         }
-
-    def state_args(self, root: str) -> list[str]:
-        require(bool(self.config.get("backend")), "Local state is disabled; configure Azure Blob state.")
-        return []
+        if self.australian:
+            binding["deployment_profile"] = "australiaeast-luna"
+        return binding
 
     def backend_config(self, root: str) -> dict[str, Any]:
         backend = self.config["backend"]
@@ -275,7 +426,7 @@ class Launcher:
             "resource_group_name": backend["resource_group_name"],
             "storage_account_name": backend["storage_account_name"],
             "container_name": backend["container_name"],
-            "key": backend["models_key" if root == "models" else "main_key"],
+            "key": backend["models_key" if root == self.model_root else "main_key"],
             "tenant_id": self.config["tenant_id"],
             "subscription_id": self.config["subscription_id"],
             "use_azuread_auth": True,
@@ -285,11 +436,13 @@ class Launcher:
         }
 
     def prepare_backend(self) -> None:
-        # No implicit migration/adoption. These checks run before any Terraform operation.
         binding_path = self.directory / "backend-binding.json"
         binding = self.environment_binding()
         if binding_path.exists():
-            require(read_json(binding_path) == binding, "Backend/region binding changed; separate migration review required.")
+            require(
+                read_json(binding_path) == binding,
+                "Backend/region binding changed; separate migration review required.",
+            )
             return
         require(
             not any(self.directory.glob("*.tfstate*"))
@@ -303,16 +456,20 @@ class Launcher:
                 "--container-name", backend["container_name"], "--name", backend[key],
                 "--auth-mode", "login",
             )
-            require(exists.get("exists") is False, "Remote state already exists; adoption requires separate review.")
+            require(
+                exists.get("exists") is False,
+                "Remote state already exists; adoption requires separate review.",
+            )
         write_json(binding_path, binding)
 
     def az(self, *args: str) -> Any:
+        # `az ad` commands are tenant-scoped and reject --subscription.
+        scope = [] if args and args[0] == "ad" else ["--subscription", self.config["subscription_id"]]
         return self.run(
             [
                 "az",
                 *args,
-                "--subscription",
-                self.config["subscription_id"],
+                *scope,
                 "--only-show-errors",
                 "--output",
                 "json",
@@ -320,9 +477,11 @@ class Launcher:
         )
 
     def tf(self, root: str, *args: str, json_output: bool = False) -> Any:
-        require(root in ("terraform", "models"), "Unknown Terraform root.")
-        remote = bool(self.config.get("backend"))
-        require(remote, "This deployment requires the configured Azure Blob backend; local state is disabled.")
+        require(root in ("terraform", self.model_root), "Unknown Terraform root.")
+        require(
+            bool(self.config.get("backend")),
+            "This deployment requires the configured Azure Blob backend; local state is disabled.",
+        )
         require(
             not any(
                 key.startswith("TF_CLI_ARGS") or key == "TF_WORKSPACE"
@@ -332,17 +491,18 @@ class Launcher:
             ),
             "Clear Terraform CLI/workspace overrides and ARM credential/auth overrides; use Azure CLI login.",
         )
-        # Serialize launcher operations in this checkout to avoid shared root/data-dir collisions.
         old = os.environ.get("TF_DATA_DIR")
         os.environ["TF_DATA_DIR"] = str(self.directory / (root + "-data"))
         try:
             with environment_lock(ROOT / ".deployment" / "terraform-root-lock"):
                 source = ROOT / "infra" / root
-                declared_remote = any(
-                    'backend "azurerm"' in path.read_text(encoding="utf-8")
-                    for path in source.glob("*.tf")
+                require(
+                    any(
+                        'backend "azurerm"' in path.read_text(encoding="utf-8")
+                        for path in source.glob("*.tf")
+                    ),
+                    "The Terraform root must declare the Azure Blob backend.",
                 )
-                require(declared_remote, "The Terraform root must declare the Azure Blob backend.")
                 require(
                     not any(source.glob("*override.tf")) and not any(source.glob("*override.tf.json")),
                     "Terraform override collision; remove only a verified stale override after review.",
@@ -350,11 +510,13 @@ class Launcher:
                 self.prepare_backend()
                 if args[0] == "init":
                     config_path = self.directory / (root + ".backend.hcl")
-                    content = "".join(
-                        f"{key} = {json.dumps(value)}\n"
-                        for key, value in self.backend_config(root).items()
+                    config_path.write_text(
+                        "".join(
+                            f"{key} = {json.dumps(value)}\n"
+                            for key, value in self.backend_config(root).items()
+                        ),
+                        encoding="ascii",
                     )
-                    config_path.write_text(content, encoding="ascii")
                     args = (*args, f"-backend-config={config_path}")
                 return self.run(["terraform", f"-chdir={source}", *args], json_output=json_output)
         finally:
@@ -408,7 +570,7 @@ class Launcher:
 
     def preflight(self) -> None:
         version = self.run(["terraform", "version", "-json"])
-        require(version["terraform_version"] == "1.12.1", "Use Terraform 1.12.1.")
+        require(bool(re.fullmatch(r"1\.16\.\d+", version["terraform_version"])), "Use Terraform 1.16.x.")
         require(sys.version_info >= (3, 11), "Use Python 3.11 or newer.")
         account = self.az("account", "show")
         require(
@@ -422,8 +584,10 @@ class Launcher:
         )
         self.az("group", "show", "--name", self.config["resource_group_name"])
         providers = self.az("provider", "list")
-        registered = {item["namespace"] for item in providers if item["registrationState"] == "Registered"}
-        missing = sorted(set(PROVIDERS) - registered)
+        registered = {
+            item["namespace"].lower() for item in providers if item["registrationState"] == "Registered"
+        }
+        missing = sorted(name for name in PROVIDERS if name.lower() not in registered)
         require(not missing, "Ask the subscription owner to register providers: " + ", ".join(missing))
         print("Read-only preflight passed. It does not prove directory/RBAC, quota or private data access.")
 
@@ -454,8 +618,7 @@ class Launcher:
         print("Dedicated registrations configured. Directory consent remains subject to customer policy.")
 
     def outputs(self) -> dict[str, Any]:
-        self.tf("terraform", "init", "-input=false")
-        return self.tf("terraform", "output", *self.state_args("terraform"), "-json", json_output=True)
+        return self.tf("terraform", "output", "-json", json_output=True)
 
     def main_inputs(self, phase: str) -> dict[str, Any]:
         self.approved("cost_network_and_permissions_reviewed")
@@ -465,12 +628,13 @@ class Launcher:
             "subscription_id": c["subscription_id"],
             "resource_group_name": c["resource_group_name"],
             "name_prefix": self.prefix,
-            "location": c["location"],
-            "model_location": c["model_location"],
+            "location": self.location,
+            "model_location": "australiaeast" if self.australian else "eastus",
             "sql_location": c["sql_location"],
             "publisher_name": c["publisher_name"],
             "publisher_email": c["publisher_email"],
             "deployment_approved": True,
+            "manual_rbac_verified": c.get("manual_rbac_verified", False),
             "deployment_stage": "prerequisites",
             "gateway_origin_hostname": self.hostname,
             "network": {
@@ -495,9 +659,14 @@ class Launcher:
             "apim_capacity": 1,
             "log_retention_days": 30,
             "mise_sidecar_enabled": True,
+            "mise_direct_jwt_enabled": c.get("mise_direct_jwt_enabled", False),
             "protection_language_enabled": True,
             "model_backends_file": str(self.directory / "model-backends.json"),
         }
+        if self.australian:
+            values["deployment_profile"] = "australiaeast-luna"
+        if c.get("monthly_budget") is not None:
+            values["monthly_budget"] = c["monthly_budget"]
         if phase == "prerequisites":
             return values
         identity = self.identity()
@@ -529,6 +698,7 @@ class Launcher:
                         "registry_url": "https://" + registry,
                         "port": 8000 if component == "api" else 8080,
                         "health_path": "/health" if component == "api" else "/healthz",
+                        "always_on": c.get("app_always_on", {}).get(component, True),
                     }
                     for component in ("api", "customer", "admin")
                 },
@@ -539,6 +709,7 @@ class Launcher:
             values.update(
                 {
                     "deployment_stage": "edge-bootstrap" if phase == "edge-bootstrap" else "edge-candidate",
+                    "app_gateway_existing_nsg_name": c.get("app_gateway_existing_nsg_name") or None,
                     "edge": {
                         "dns_label": c["dns_label"],
                         "origin_hostname": self.hostname,
@@ -565,16 +736,26 @@ class Launcher:
             evidence = read_json(self.directory / "model-backends.json")
             require(evidence["subscription_id"] == c["subscription_id"], "Wrong model evidence subscription.")
             require(not evidence.get("blocked"), "Direct model verification has blockers.")
+            if self.australian:
+                self.validate_australian_evidence(evidence)
             values.update(
                 {
                     "dev_openai_inference_enabled": True,
                     "dev_unified_inference_enabled": True,
                     "dev_direct_portals_enabled": True,
-                    "dev_openai_content_safety_threshold": 0,
+                    "dev_portals_operator_only": True,
+                    "dev_openai_content_safety_threshold": c.get("dev_openai_content_safety_threshold", 0),
+                    "dev_unified_accepted_model_aliases": c.get("additional_model_aliases", []),
                     "dev_portal_origins": [
                         f"https://{self.prefix}-{app}.azurewebsites.net" for app in ("customer", "admin")
                     ],
                     "dev_admin_settings_enabled": c["admin_settings_enabled"],
+                    "dev_admin_settings_provisioned": c.get("admin_settings_provisioned", False),
+                    "dev_gateway_controls_v2_enabled": c.get("gateway_controls_v2_enabled", False),
+                    "dev_protected_material_available": c.get("protected_material_available", False),
+                    "dev_monthly_request_quota_available": c.get("monthly_request_quota_available", False),
+                    "dev_safety_relaxation_allowed": c.get("safety_relaxation_allowed", False),
+                    "dev_gateway_max_rpm": c.get("gateway_max_rpm", 2),
                     "dev_unified_max_completion_tokens": 4096,
                     "private_sql_connectivity_accepted": True,
                 }
@@ -633,10 +814,15 @@ class Launcher:
                 "name_prefix",
                 "bootstrap_object_id",
                 "dns_label",
-                "location",
-                "model_location",
             )
         }
+        compiled["location"] = self.location
+        compiled["model_location"] = self.config.get(
+            "model_location", "australiaeast" if self.australian else "eastus"
+        )
+        if self.australian:
+            compiled["deployment_profile"] = self.config["deployment_profile"]
+            compiled["additional_model_aliases"] = sorted(self.config.get("additional_model_aliases", []))
         return digest(
             json.dumps(
                 {
@@ -693,7 +879,7 @@ class Launcher:
         self.preflight()
         self.check_progress(phase)
         (self.directory / "plan-review.json").unlink(missing_ok=True)
-        root = "models" if phase == "models" else "terraform"
+        root = self.model_root if phase == "models" else "terraform"
         if phase == "models":
             self.approved("model_terms_and_quota_reviewed")
             outputs = self.outputs()
@@ -705,6 +891,13 @@ class Launcher:
                 "gateway_principal_id": outputs["identity_principal_ids"]["value"]["gateway"],
                 "model_aliases": list(ALIASES[:2]),
             }
+            if self.australian:
+                inputs = {
+                    "subscription_id": self.config["subscription_id"],
+                    "resource_group_name": self.config["resource_group_name"],
+                    "account_name": self.prefix + "-foundry",
+                    "gateway_principal_id": outputs["identity_principal_ids"]["value"]["gateway"],
+                }
         else:
             inputs = self.main_inputs(phase)
         self.tf(root, "init", "-input=false")
@@ -716,7 +909,6 @@ class Launcher:
             "plan",
             "-input=false",
             "-lock-timeout=30s",
-            *self.state_args(root),
             f"-var-file={var_file}",
             f"-out={plan_file}",
         )
@@ -768,7 +960,6 @@ class Launcher:
         )
         require(review["plan_hash"] == digest(plan_file.read_bytes()), "Saved plan changed; replan.")
         require(approval == review["approval"], "Explicit complete-plan approval token is required.")
-        self.tf(review["root"], "init", "-input=false")
         # A failed/interrupted apply invalidates approval; partial state must be refreshed/replanned.
         review_path.unlink()
         self.tf(
@@ -777,7 +968,6 @@ class Launcher:
             "-input=false",
             "-lock-timeout=30s",
             "-parallelism=1",
-            *self.state_args(review["root"]),
             str(plan_file),
         )
         write_json(
@@ -796,20 +986,28 @@ class Launcher:
         source = read_json(ROOT / "gateway" / "catalog" / "dev-models.json")
         selected = []
         for item in source["models"]:
-            if item["id"] not in ALIASES:
+            if item["id"] not in self.aliases:
                 continue
             item["backends"] = []
+            if item["id"] in BUDGET_ALIASES:
+                item.update(enabled=True, placeholder=False, capabilities=["chat"])
             regions = ("eastus",) if item["provider"] == "Anthropic" else ("eastus", "swedencentral")
+            if self.australian:
+                regions = ("australiaeast",)
             for region in regions:
                 account = self.prefix + "-foundry" + ("-swc" if region == "swedencentral" else "")
                 endpoint = (
                     f"https://{account}.services.ai.azure.com/anthropic/v1"
                     if item["provider"] == "Anthropic"
-                    else f"https://{account}.openai.azure.com/openai/v1"
+                    else (
+                        f"https://{account}.services.ai.azure.com/models"
+                        if item["provider"] == "DeepSeek"
+                        else f"https://{account}.openai.azure.com/openai/v1"
+                    )
                 )
                 item["backends"].append(
                     {
-                        "id": item["id"] + "-" + region,
+                        "id": f"dev-{item['id']}-{region}".lower().replace(".", "-"),
                         "region": region,
                         "url": endpoint,
                         "model": item["id"],
@@ -818,8 +1016,20 @@ class Launcher:
                     }
                 )
             selected.append(item)
-        require({item["id"] for item in selected} == set(ALIASES), "Pinned pilot catalog is incomplete.")
+        require({item["id"] for item in selected} == set(self.aliases), "Pinned pilot catalog is incomplete.")
         return {"models": selected}
+
+    def prices(self) -> list[dict[str, Any]]:
+        allowed = {
+            (model["id"], backend.get("provider") or model["provider"], backend["region"])
+            for model in self.catalog()["models"]
+            for backend in model["backends"]
+            if model["enabled"]
+        }
+        return [
+            price for price in read_json(ROOT / "gateway" / "catalog" / "dev-prices.json")
+            if (price["model"], price["provider"], price["region"]) in allowed
+        ]
 
     def build(self) -> None:
         self.preflight()
@@ -856,6 +1066,7 @@ class Launcher:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
             write_json(context / "gateway" / "catalog" / "dev-models.json", self.catalog())
+            write_json(context / "gateway" / "catalog" / "dev-prices.json", self.prices())
             write_json(self.directory / "catalog.json", self.catalog())
             for component, dockerfile in dockerfiles.items():
                 repository = "aiflux-" + component
@@ -906,10 +1117,6 @@ class Launcher:
             self.config["subscription_id"],
             "--resource-group",
             self.config["resource_group_name"],
-            "--eastus-account",
-            self.prefix + "-foundry",
-            "--sweden-account",
-            self.prefix + "-foundry-swc",
             "--gateway-principal-id",
             self.outputs()["identity_principal_ids"]["value"]["gateway"],
             "--post-deploy",
@@ -917,7 +1124,18 @@ class Launcher:
             "--output",
             str(self.directory / "model-backends.json"),
         ]
-        for alias in ALIASES:
+        if self.australian:
+            arguments.extend(["--australiaeast-account", self.prefix + "-foundry"])
+        else:
+            arguments.extend(
+                [
+                    "--eastus-account",
+                    self.prefix + "-foundry",
+                    "--sweden-account",
+                    self.prefix + "-foundry-swc",
+                ]
+            )
+        for alias in self.aliases:
             arguments.extend(["--model-alias", alias])
         self.run(arguments, json_output=False)
         evidence = read_json(self.directory / "model-backends.json")
@@ -925,6 +1143,10 @@ class Launcher:
             not evidence["blocked"],
             "Direct model checks blocked. Resolve access/Haiku/quota before continuing.",
         )
+        if self.australian:
+            self.validate_australian_evidence(evidence)
+            print("Direct Australian model checks passed; guarded gateway acceptance remains separate.")
+            return
         require(
             len(evidence["backends"]) == 4
             and all(
@@ -941,6 +1163,50 @@ class Launcher:
         )
         print("Direct model checks passed; guarded gateway acceptance remains separate.")
 
+    def validate_australian_evidence(self, evidence: dict[str, Any]) -> None:
+        expected_account = (
+            f"/subscriptions/{self.config['subscription_id']}"
+            f"/resourceGroups/{self.config['resource_group_name']}"
+            f"/providers/Microsoft.CognitiveServices/accounts/{self.prefix}-foundry"
+        )
+        backends = evidence.get("backends", [])
+        expected_aliases = {"gpt-5.6-luna", *self.config.get("additional_model_aliases", [])}
+        require(
+            evidence.get("subscription_id") == self.config["subscription_id"]
+            and not evidence.get("blocked")
+            and not evidence.get("anthropic_backends")
+            and len(backends) == len(expected_aliases)
+            and {item.get("alias") for item in backends} == expected_aliases,
+            "Australia East requires exactly the opted-in aliases and no other regions/models.",
+        )
+        specification = read_json(ROOT / "infra" / "models" / "model-spec.json")["models"]
+        for item in backends:
+            alias = item["alias"]
+            pinned = next(model for model in specification if model["id"] == alias)
+            smoke = item.get("operator_smoke", {})
+            endpoint = (
+                f"https://{self.prefix}-foundry.services.ai.azure.com/models"
+                if pinned["endpoint_source"] == "model_inference_endpoint"
+                else f"https://{self.prefix}-foundry.openai.azure.com"
+            )
+            require(
+                item.get("region") == "australiaeast"
+                and item.get("account_resource_id") == expected_account
+                and item.get("deployment_resource_id") == expected_account + "/deployments/" + alias
+                and item.get("model_name") == alias
+                and item.get("model_version") == pinned["version"]
+                and item.get("sku") == "GlobalStandard"
+                and item.get("capacity") == pinned["capacity"]
+                and item.get("endpoint") == endpoint
+                and item.get("ready") is True
+                and item.get("auth", {}).get("gateway_role_assigned") is True
+                and smoke.get("passed") is True
+                and smoke.get("http_status") == 200
+                and smoke.get("choices_schema_present") is True,
+                "Australia East model evidence does not match the pinned deployment "
+                "or successful direct smoke.",
+            )
+
     def sql_init(self) -> None:
         self.preflight()
         self.approved("cost_network_and_permissions_reviewed")
@@ -955,7 +1221,7 @@ class Launcher:
                 "--resource-group",
                 self.config["resource_group_name"],
                 "--name",
-                self.prefix + "-" + component,
+                self.prefix + "-" + component + "-identity",
             )
             require(
                 identity["principalId"] == outputs["identity_principal_ids"]["value"][component],
@@ -1062,22 +1328,20 @@ def main() -> None:
         directory = ROOT / ".deployment" / config["name_prefix"]
         with environment_lock(directory):
             binding_path = directory / "environment.json"
-            launcher = Launcher(config, directory)
-            binding = launcher.environment_binding()
+            binding = {
+                key: config[key]
+                for key in ("tenant_id", "subscription_id", "resource_group_name", "name_prefix")
+            }
+            if config.get("deployment_profile", "legacy") != "legacy":
+                binding["deployment_profile"] = config["deployment_profile"]
             if binding_path.exists():
-                previous = read_json(binding_path)
-                # Upgrade legacy local East US bindings only; never implicitly migrate them.
-                if set(previous) == {"tenant_id", "subscription_id", "resource_group_name", "name_prefix"}:
-                    require(
-                        config["location"] == "eastus" and not config.get("backend"),
-                        "Legacy local environment requires a separate region/backend migration review.",
-                    )
-                    previous = {**binding, **previous}
                 require(
-                    previous == binding,
-                    "Environment/backend/region changed; separate migration review required.",
+                    read_json(binding_path) == binding,
+                    "Local state directory belongs to another environment.",
                 )
-            write_json(binding_path, binding)
+            else:
+                write_json(binding_path, binding)
+            launcher = Launcher(config, directory)
             if args.action == "plan":
                 launcher.plan(args.phase)
             elif args.action == "apply":

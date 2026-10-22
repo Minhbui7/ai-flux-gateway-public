@@ -7,6 +7,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PublicDeploymentContractTests(unittest.TestCase):
+    def test_main_root_preserves_manual_rbac_handoff(self):
+        root = ROOT / "infra" / "terraform"
+        source = "\n".join(path.read_text(encoding="utf-8") for path in root.glob("*.tf"))
+        active = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+        self.assertNotRegex(active, r'resource\s+"azurerm_role_(?:assignment|definition)"')
+        self.assertIn("var.manual_rbac_verified", active)
+        self.assertIn('resource_provider_registrations = "none"', active)
+
     def test_hybrid_root_has_no_operator_compute_or_private_state(self):
         root = ROOT / "infra" / "terraform"
         source = "\n".join(path.read_text(encoding="utf-8") for path in root.glob("*.tf"))
@@ -18,8 +26,8 @@ class PublicDeploymentContractTests(unittest.TestCase):
         }))
         self.assertNotIn("operator_network", source)
         self.assertNotIn("terraform_remote_state", source)
-        self.assertIn('backend "local"', source)
-        self.assertNotIn('backend "azurerm"', source)
+        self.assertIn('backend "azurerm"', source)
+        self.assertNotIn('backend "local"', source)
         self.assertNotIn("apim_private_access", source)
         self.assertIn('variable "hybrid_private_data_enabled"', source)
         private_data = (root / "private-data.tf").read_text(encoding="utf-8")
@@ -55,8 +63,17 @@ class PublicDeploymentContractTests(unittest.TestCase):
 
     def test_remote_build_context_excludes_deployment_credentials(self):
         exclusions = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
-        for pattern in ("infra", ".deployment", "**/*.tfplan", "**/*.tfvars", "**/*.tfstate*"):
+        for pattern in ("infra/*", ".deployment", ".azure", "**/*.tfplan", "**/*.tfvars", "**/*.tfstate*"):
             self.assertIn(pattern, exclusions)
+        self.assertEqual(
+            [pattern for pattern in exclusions if pattern.startswith("!infra/")],
+            ["!infra/sql", "!infra/sql/bootstrap-identities.sql"],
+        )
+        self.assertLess(exclusions.index("infra/*"), exclusions.index("!infra/sql"))
+        self.assertLess(exclusions.index("!infra/sql"), exclusions.index("infra/sql/*"))
+        self.assertLess(
+            exclusions.index("infra/sql/*"), exclusions.index("!infra/sql/bootstrap-identities.sql")
+        )
 
     def test_approved_dev_entra_bootstrap_does_not_create_secrets(self):
         source = (ROOT / "infra" / "scripts" / "bootstrap-entra.py").read_text(encoding="utf-8")

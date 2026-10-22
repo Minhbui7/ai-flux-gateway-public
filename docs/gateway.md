@@ -126,7 +126,7 @@ That is why the explicit adapter was approved; do not represent it as native sup
 
 ## Implemented surface
 
-An optional admin settings fragment can now supply a request-scoped Content Safety
+The legacy optional admin settings fragment supplies a request-scoped Content Safety
 threshold and native RPM/TPM/token quota enforcement for each guarded dev API.
 The API policies still own all three safety passes, PII/Prompt Shields, routing,
 output ceilings and fail-closed errors. This does not activate production.
@@ -135,6 +135,18 @@ see [the canonical settings contract](control-plane.md#admin-managed-gateway-set
 and [operator rollout/rollback](infrastructure.md#opt-in-admin-gateway-settings).
 Initial activation isolates counter keys by API because the two guarded surfaces
 have different TPM ceilings. Subsequent revisions retain stable keys.
+
+The new opt-in versioned policy templates prepare for a dependent application
+release; do not activate them with the baseline runtime. That release will share one complete configuration and
+counter namespace across guarded routes/models, using the lower supported TPM
+ceiling. They add aggregate team and subscription RPM, literal-tier backend
+concurrency, calendar-partitioned request quotas and a separate safety profile.
+Native limits remain approximate. Terraform owns routing/forwarding and minimum
+inspection; the runtime writes only bounded settings fragments. Protected-text
+output scanning is separately capability-gated. See
+[versioned controls](control-plane.md#versioned-team-limits-and-content-safety)
+and [staged activation](infrastructure.md#versioned-controls-rollout).
+Implementation is not proof of live Basic v2 enforcement or production release.
 
 Terraform creates the public Basic v2 development candidate, an **unpublished** subscription-required
 Product `aiflux`, and a **disabled ordinary HTTP placeholder**, not a native unified model API.

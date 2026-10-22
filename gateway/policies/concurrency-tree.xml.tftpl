@@ -1,0 +1,37 @@
+<choose>
+  <when condition='@(context.Variables.GetValueOrDefault&lt;bool&gt;("aiflux-managed-v2", false))'>
+    <choose>
+%{ for team in [16, 8, 4, 2, 1, 0] ~}
+%{ if team > 0 ~}
+      <when condition='@(context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-team-concurrency", 0) &gt;= ${team})'>
+        <limit-concurrency key='@("aiflux-conc:team:" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-organization-id", "") + ":" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-team-id", ""))' max-count="${team}">
+%{ else ~}
+      <otherwise>
+%{ endif ~}
+          <choose>
+%{ for sub in [16, 8, 4, 2] ~}
+            <when condition='@(context.Variables.GetValueOrDefault&lt;int&gt;("aiflux-subscription-concurrency", 0) &gt;= ${sub})'>
+              <limit-concurrency key='@("aiflux-conc:sub:" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-organization-id", "") + ":" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-team-id", "") + ":" + context.Subscription.Id)' max-count="${sub}">
+                <include-fragment fragment-id="${fragment_id}" />
+              </limit-concurrency>
+            </when>
+%{ endfor ~}
+            <otherwise>
+              <limit-concurrency key='@("aiflux-conc:sub:" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-organization-id", "") + ":" + context.Variables.GetValueOrDefault&lt;string&gt;("aiflux-team-id", "") + ":" + context.Subscription.Id)' max-count="1">
+                <include-fragment fragment-id="${fragment_id}" />
+              </limit-concurrency>
+            </otherwise>
+          </choose>
+%{ if team > 0 ~}
+        </limit-concurrency>
+      </when>
+%{ else ~}
+      </otherwise>
+%{ endif ~}
+%{ endfor ~}
+    </choose>
+  </when>
+  <otherwise>
+    <include-fragment fragment-id="${fragment_id}" />
+  </otherwise>
+</choose>

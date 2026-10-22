@@ -18,7 +18,7 @@ jobs:
           dotnet-version: "8.0.x"
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1"
+          terraform_version: "1.16.5"
           terraform_wrapper: false
       - name: Initialize providers for rendered customer-profile mock plans
         run: terraform -chdir=infra/terraform init -backend=false -input=false
@@ -26,6 +26,7 @@ jobs:
       - run: ruff check services/control-plane/src tests/unit scripts/deployment infra/scripts/bootstrap-entra.py infra/models/verify.py gateway/tools/verify_adapter.py
       - run: mypy
       - run: pytest -q tests/unit tests/contract
+      - run: python -m unittest discover -s tests/contract -p "test_gateway*.py"
       - name: Validate migrations
         env:
           AIFLUX_DATABASE_URL: sqlite:///migration-check.db
@@ -51,11 +52,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1"
+          terraform_version: "1.16.5"
       - run: terraform -chdir=infra/models fmt -check -recursive
       - run: terraform -chdir=infra/models init -backend=false -input=false
       - run: terraform -chdir=infra/models validate
       - run: terraform -chdir=infra/models test
+      - run: terraform -chdir=infra/models-australiaeast fmt -check -recursive
+      - run: terraform -chdir=infra/models-australiaeast init -backend=false -input=false
+      - run: terraform -chdir=infra/models-australiaeast validate
+      - run: terraform -chdir=infra/models-australiaeast test
+      - run: terraform -chdir=infra/sql-runner fmt -check -recursive
+      - run: terraform -chdir=infra/sql-runner init -backend=false -input=false
+      - run: terraform -chdir=infra/sql-runner validate
+      - run: terraform -chdir=infra/sql-runner test
       - run: terraform -chdir=infra/operator fmt -check -recursive
       - run: terraform -chdir=infra/operator init -backend=false -input=false
       - run: terraform -chdir=infra/operator validate
@@ -69,4 +78,3 @@ jobs:
       - run: terraform -chdir=infra/state validate
       - run: terraform -chdir=infra/state test
       - run: python gateway/tools/validate_bundle.py
-      - run: python -m unittest discover -s tests/contract -p "test_gateway*.py"

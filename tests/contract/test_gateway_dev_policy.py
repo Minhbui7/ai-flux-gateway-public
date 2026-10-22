@@ -131,7 +131,8 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertTrue(all(policy.get("backend-id") == "${safety_backend_id}" for policy in safety_policies))
         self.assertTrue(
             all(
-                category.get("threshold") == "${safety_threshold}"
+                category.get("threshold")
+                == {"Hate": "${hate_threshold}", "SelfHarm": "${selfharm_threshold}", "Sexual": "${sexual_threshold}", "Violence": "${violence_threshold}"}[category.get("name")]
                 for policy in safety_policies
                 for category in policy.findall("./categories/category")
             )
@@ -216,6 +217,14 @@ class GuardedDevelopmentPolicyTests(unittest.TestCase):
         self.assertEqual(errors[1].find("./return-response/set-status").get("code"), "400")
         self.assertEqual(errors[2].find("./return-response/set-status").get("code"), "429")
         self.assertIn("TokenLimitExceededAfterPrompt", errors[2].get("condition"))
+        self.assertIn("llm-token-limit", errors[2].get("condition"))
+        by_condition = {w.get("condition"): w for w in errors}
+        concurrency = next(w for c, w in by_condition.items() if 'Source == "limit-concurrency"' in c)
+        self.assertEqual(concurrency.find("./return-response/set-status").get("code"), "429")
+        quota = next(w for c, w in by_condition.items() if "aiflux-managed-request-quota-team" in c)
+        self.assertIn("QuotaExceeded", quota.get("condition"))
+        self.assertIn("aiflux-managed-request-quota-subscription", quota.get("condition"))
+        self.assertEqual(quota.find("./return-response/set-status").get("code"), "403")
         self.assertEqual(
             self.dev_policy.find(".//llm-token-limit").get("retry-after-variable-name"),
             "aiflux-token-retry-after",

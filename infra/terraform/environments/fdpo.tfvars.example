@@ -1,15 +1,15 @@
 # Existing externally owned dev RG. No Azure deployment is implied by this example.
-subscription_id     = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
-resource_group_name = "rg-aiflux-fdpo-dev"
+subscription_id     = "00000000-0000-0000-0000-000000000000"
+resource_group_name = "rg-aiflux-example-dev"
 location            = "eastus"
 sql_location        = "australiaeast"
-name_prefix         = "aiflux-fdpo-dev"
+name_prefix         = "aiflux-example-dev"
 
 # Public Basic v2/protection first; cost/config approval is separate from inference.
 deployment_stage    = "apim"
-gateway_origin_hostname         = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
+gateway_origin_hostname         = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
 deployment_approved = false
-publisher_email     = "ajanakiraman@microsoft.com"
+publisher_email     = "operator@example.com"
 apim_capacity       = 1
 log_retention_days  = 30
 
@@ -43,7 +43,7 @@ network = {
 # Public-edge prerequisites: existing versionless Key Vault certificate secret URI,
 # vault ID, timeout/WAF limits/zones, and explicit public_edge_live_gates_approved.
 # Candidate, NOT verified DNS/certificate:
-#   dns_label       = "aiflux-gateway-dev"
-#   origin_hostname = "aiflux-gateway-dev.eastus.cloudapp.azure.com"
+#   dns_label       = "aiflux-example-gateway-dev"
+#   origin_hostname = "aiflux-example-gateway-dev.eastus.cloudapp.azure.com"
 # ACME HTTP-01 bootstrap/automated renewal is planned, not implemented or issued.
 # Product, Function and inference remain disabled in every stage.

@@ -3,6 +3,24 @@
 An Azure API Management AI gateway with a tenant-isolated customer/IDS control
 plane. Inference goes directly through APIM, not through the control-plane API.
 
+## Public examples and deployment inputs
+
+Deployment identifiers in this public snapshot are placeholders, not working
+configuration. The all-zero subscription ID, synthetic tenant/operator/application
+UUIDs, `aiflux-example*` resource names and endpoints, `operator@example.com`, and
+documentation address `203.0.113.10` must be replaced with reviewed values in
+ignored local inputs before any operator command is used. Pass the actual tenant,
+bootstrap object ID, prefix and hostname explicitly to the Entra bootstrap tool.
+Azure built-in role IDs and service authentication audiences are not placeholders.
+The deferred operator's GitHub OIDC subject also requires replacing
+`REPLACE_WITH_GITHUB_OWNER/REPLACE_WITH_REPOSITORY` with the approved repository.
+
+Historical runbook observations do not validate these substituted example values.
+Private source-repository links are omitted; local credentials, deployment
+evidence, state, plans and generated artifacts are not part of this snapshot.
+Private `*.tfvars.json` inputs are excluded from Git and container build contexts;
+sanitized `*.tfvars.json.example` files may be tracked as examples.
+
 **Production/native inference remains gated.** The separately configured guarded
 development adapter is an ordinary HTTP API with explicit provider translation,
 not proof of native unified-model preview support. Documentation records repository

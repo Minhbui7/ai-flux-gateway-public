@@ -56,6 +56,9 @@ resource "azurerm_api_management_product_api" "blocked" {
 }
 
 locals {
+  australian_pilot    = var.deployment_profile == "australiaeast-luna"
+  dev_base_regions    = local.australian_pilot ? ["australiaeast"] : ["eastus", "swedencentral"]
+  dev_haiku_aliases   = local.australian_pilot ? [] : ["claude-haiku-5-5"]
   model_backends_path = var.model_backends_file != null ? var.model_backends_file : "${path.module}/../models/model-backends.json"
   model_descriptor = jsondecode(
     fileexists(local.model_backends_path) ?
@@ -68,12 +71,12 @@ locals {
   }
   deployment_target_regions = {
     for model in local.deployment_specs.models :
-    model.id => lookup(model, "regions", local.deployment_specs.regions)
+    model.id => (local.australian_pilot ? ["australiaeast"] : lookup(model, "regions", local.deployment_specs.regions))
   }
-  dev_aliases = toset(["gpt-5.6-luna", "gpt-5.6-sol"])
+  dev_aliases = local.australian_pilot ? toset(["gpt-5.6-luna"]) : toset(["gpt-5.6-luna", "gpt-5.6-sol"])
   dev_new_aliases = toset([
     for alias, model in local.deployment_spec_by_alias : alias
-    if model.terraform_managed && !contains(local.dev_aliases, alias)
+    if(model.terraform_managed || try(model.existing_deployment, false)) && !contains(local.dev_aliases, alias)
   ])
   dev_candidate_aliases = toset(var.dev_unified_candidate_model_aliases)
   dev_accepted_aliases  = toset(var.dev_unified_accepted_model_aliases)
@@ -136,14 +139,14 @@ locals {
   dev_completion_limits = merge(
     { for alias in local.dev_unified_routed_aliases :
     alias => local.deployment_spec_by_alias[alias].max_completion_tokens },
-    { "claude-haiku-5-5" = local.deployment_spec_by_alias["claude-haiku-5-5"].max_completion_tokens }
+    { for alias in local.dev_haiku_aliases : alias => local.deployment_spec_by_alias[alias].max_completion_tokens }
   )
   dev_policy_aliases = var.dev_unified_inference_enabled ? setunion(
     local.dev_unified_routed_aliases,
-    toset(["claude-haiku-5-5"])
+    toset(local.dev_haiku_aliases)
   ) : local.dev_aliases
   dev_policy_openai_aliases = var.dev_unified_inference_enabled ? local.dev_openai_routed_aliases : local.dev_aliases
-  dev_policy_anthropic_aliases = var.dev_unified_inference_enabled ? toset(concat(["claude-haiku-5-5"], [
+  dev_policy_anthropic_aliases = var.dev_unified_inference_enabled ? toset(concat(local.dev_haiku_aliases, [
     for alias in local.dev_selected_new_aliases : alias
     if local.deployment_spec_by_alias[alias].arm_format == "Anthropic"
   ])) : toset([])
@@ -158,7 +161,7 @@ locals {
     for alias in local.dev_policy_openai_aliases :
     alias => contains(local.dev_model_pooled_aliases, alias)
     ? "dev-${lower(replace(alias, ".", "-"))}-pool"
-    : "dev-${lower(replace("${alias}-${lookup(local.deployment_spec_by_alias[alias], "regions", local.deployment_specs.regions)[0]}", ".", "-"))}"
+    : "dev-${lower(replace("${alias}-${local.deployment_target_regions[alias][0]}", ".", "-"))}"
   }
   dev_policy_anthropic_backend_ids = {
     for alias in local.dev_policy_anthropic_aliases :
@@ -205,11 +208,28 @@ resource "terraform_data" "dev_openai_gate" {
         length([
           for backend in values(local.dev_model_backends) : backend
           if contains(local.dev_aliases, backend.alias)
-        ]) == 4 &&
+        ]) == length(local.dev_aliases) * length(local.dev_base_regions) &&
+        (!local.australian_pilot || (
+          length(local.model_descriptor.backends) == length(local.dev_unified_routed_aliases) &&
+          alltrue([for backend in local.model_descriptor.backends :
+            contains(local.dev_unified_routed_aliases, backend.alias) &&
+            backend.region == "australiaeast" &&
+            backend.account_name == "${local.prefix}-foundry" &&
+            backend.account_resource_id == "/subscriptions/${var.subscription_id}/resourceGroups/${local.rg}/providers/Microsoft.CognitiveServices/accounts/${local.prefix}-foundry" &&
+            backend.deployment_resource_id == "${backend.account_resource_id}/deployments/${backend.alias}" &&
+            backend.deployment_name == backend.alias &&
+            backend.model_name == backend.alias &&
+            backend.sku == "GlobalStandard" &&
+            backend.provisioning_state == "Succeeded"
+          ]) &&
+          length(try(local.model_descriptor.anthropic_backends, [])) == 0 &&
+          length(try(local.model_descriptor.blocked, [])) == 0
+        )) &&
         alltrue([
           for backend in values(local.dev_model_backends) :
           backend.provider == "OpenAI" &&
           backend.account_resource_id == "/subscriptions/${var.subscription_id}/resourceGroups/${local.rg}/providers/Microsoft.CognitiveServices/accounts/${backend.account_name}" &&
+          (!local.australian_pilot || backend.account_name == "${local.prefix}-foundry") &&
           backend.deployment_resource_id == "${backend.account_resource_id}/deployments/${backend.deployment_name}" &&
           backend.endpoint == "https://${backend.account_name}.openai.azure.com" &&
           backend.deployment_name == backend.alias &&
@@ -233,9 +253,9 @@ resource "terraform_data" "dev_openai_gate" {
         ]) &&
         alltrue([
           for alias in local.dev_aliases :
-          length(local.dev_model_pools[alias].backends) == 2 &&
+          length(local.dev_model_pools[alias].backends) == length(local.dev_base_regions) &&
           toset([for backend in values(local.dev_model_pools[alias].backends) : backend.region]) ==
-          toset(["eastus", "swedencentral"])
+          toset(local.dev_base_regions)
         ]) &&
         length(local.dev_selected_new_aliases) <= length(local.dev_new_aliases) &&
         length(setsubtract(local.dev_selected_new_aliases, local.dev_new_aliases)) == 0 &&
@@ -349,13 +369,14 @@ resource "azapi_resource" "dev_openai_policy" {
   body = {
     properties = {
       format = "rawxml"
-      value = var.dev_openai_inference_enabled ? templatefile("${path.module}/../../gateway/policies/dev-openai.xml.tftpl", {
+      value = var.dev_openai_inference_enabled ? templatefile("${path.module}/../../gateway/policies/dev-openai.xml.tftpl", merge(local.gateway_policy_vars, {
         language_endpoint            = trimsuffix(azapi_resource.ai["language"].output.properties.endpoint, "/")
         gateway_identity_client      = azurerm_user_assigned_identity.identity["gateway"].client_id
         tpm_limit                    = var.dev_openai_tpm_limit
         rpm_limit                    = var.dev_openai_rpm_limit
         completion_token_limit       = var.dev_openai_max_completion_tokens
-        safety_threshold             = var.dev_admin_settings_enabled ? "@((int)context.Variables[&quot;aiflux-safety-threshold&quot;])" : tostring(var.dev_openai_content_safety_threshold)
+        safety_threshold             = local.gateway_legacy_threshold
+        forward_tree                 = local.gateway_managed_v2_policy ? templatefile("${path.module}/../../gateway/policies/concurrency-tree.xml.tftpl", { fragment_id = azapi_resource.gateway_forward["dev-openai"].name }) : ""
         admin_settings_enabled       = var.dev_admin_settings_enabled
         settings_fragment_id         = var.dev_admin_settings_enabled ? azapi_resource.gateway_settings["dev-openai"].name : ""
         safety_backend_id            = azapi_resource.dev_content_safety_backend[0].name
@@ -373,13 +394,15 @@ resource "azapi_resource" "dev_openai_policy" {
         anthropic_aliases            = sort(tolist(local.dev_policy_anthropic_aliases))
         anthropic_context_conditions = local.dev_policy_anthropic_context_conditions
         anthropic_backend_ids        = local.dev_policy_anthropic_backend_ids
-      }) : file("${path.module}/../../gateway/policies/disabled.xml")
+      })) : file("${path.module}/../../gateway/policies/disabled.xml")
     }
   }
   depends_on = [
     terraform_data.dev_openai_gate,
     azapi_resource.dev_model_pool,
-    azapi_resource.dev_content_safety_backend
+    azapi_resource.dev_content_safety_backend,
+    azapi_resource.gateway_forward,
+    terraform_data.approval
   ]
 }
 

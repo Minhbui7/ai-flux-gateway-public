@@ -1,27 +1,27 @@
 mock_provider "azurerm" {
   mock_data "azurerm_resource_group" {
     defaults = {
-      id       = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev"
-      name     = "rg-aiflux-fdpo-dev"
+      id       = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev"
+      name     = "rg-aiflux-example-dev"
       location = "eastus"
     }
   }
   mock_data "azurerm_client_config" {
     defaults = {
-      subscription_id = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+      subscription_id = "00000000-0000-0000-0000-000000000000"
       tenant_id       = "00000000-0000-0000-0000-000000000001"
     }
   }
   mock_resource "azurerm_user_assigned_identity" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-aiflux-fdpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aiflux-example-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test"
     }
   }
 }
 
 variables {
-  subscription_id                 = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
-  resource_group_name             = "rg-aiflux-fdpo-dev"
+  subscription_id                 = "00000000-0000-0000-0000-000000000000"
+  resource_group_name             = "rg-aiflux-example-dev"
   location                        = "eastus"
   name_prefix                     = "aiflux-test"
   address_space                   = "10.240.0.0/16"
@@ -64,7 +64,7 @@ run "private_machine" {
     error_message = "Use the reserved /24 scheme and shared state/private endpoint DNS."
   }
   assert {
-    condition     = alltrue([for role in azurerm_role_assignment.deployment : role.scope == data.azurerm_resource_group.existing.id]) && toset(keys(azurerm_role_assignment.deployment)) == toset(["Contributor", "Role Based Access Control Administrator"]) && azurerm_federated_identity_credential.deployment.subject == "repo:ajanakiraman_microsoft/ai-flux-gateway:environment:aiflux-development"
+    condition     = alltrue([for role in azurerm_role_assignment.deployment : role.scope == data.azurerm_resource_group.existing.id]) && toset(keys(azurerm_role_assignment.deployment)) == toset(["Contributor", "Role Based Access Control Administrator"]) && azurerm_federated_identity_credential.deployment.subject == "repo:REPLACE_WITH_GITHUB_OWNER/REPLACE_WITH_REPOSITORY:environment:aiflux-development"
     error_message = "Only the separate environment-federated identity may receive RG-scoped provisioning/RBAC roles."
   }
   assert {

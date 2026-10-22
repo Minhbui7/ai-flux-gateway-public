@@ -7,6 +7,29 @@ existing full-catalog state: removed deployments are not a migration strategy.
 `verify.py --model-alias <alias> --output <customer-evidence.json>` isolates
 customer evidence; omitted flags preserve the development behavior.
 
+The `australiaeast-luna` customer profile uses the separate
+[`infra\models-australiaeast`](../models-australiaeast/main.tf) root and fresh
+state. This avoids changing any existing two-region resource addresses. It reads
+the pinned Luna specification here and creates only that deployment and its
+gateway inference role in the existing Australia East account. It must not be
+applied against this development root's state.
+
+For that profile only, direct evidence is collected with:
+
+```powershell
+python infra\models\verify.py `
+  --subscription <subscription-id> --resource-group <new-resource-group> `
+  --australiaeast-account <prefix>-foundry `
+  --model-alias gpt-5.6-luna --gateway-principal-id <gateway-uami-object-id> `
+  --post-deploy --smoke --output <protected-evidence-path>
+```
+
+Do not combine the Australian account flag with legacy account flags or other
+model aliases. The verifier checks live account endpoints rather than reusing
+previous evidence in this mode. Account region, disabled key authentication,
+pinned version/capacity, RBAC and smoke checks still apply. GlobalStandard may
+process inference outside Australia; model terms require separate review.
+
 `model-spec.json` is the reviewed source for ARM formats/versions, target regions,
 GlobalStandard capacities, direct wire API/auth contracts, safe per-model adapter
 output ceilings, and shared per-model quota budgets. `main.tf`, `verify.py`, the
@@ -93,10 +116,10 @@ There is no Azure apply in this implementation task.
 
    ```powershell
    python infra\models\verify.py `
-     --subscription 4d75ed7f-75ab-4db6-b1f3-263f240d1450 `
-     --resource-group rg-aiflux-fdpo-dev `
-     --eastus-account aiflux-fdpo-dev-foundry `
-     --sweden-account aiflux-fdpo-dev-foundry-swc `
+     --subscription 00000000-0000-0000-0000-000000000000 `
+     --resource-group rg-aiflux-example-dev `
+     --eastus-account aiflux-example-dev-foundry `
+     --sweden-account aiflux-example-dev-foundry-swc `
      --gateway-principal-id '<gateway-uami-object-id>'
    ```
 
@@ -114,10 +137,10 @@ There is no Azure apply in this implementation task.
 
    ```powershell
    python infra\models\verify.py `
-     --subscription 4d75ed7f-75ab-4db6-b1f3-263f240d1450 `
-     --resource-group rg-aiflux-fdpo-dev `
-     --eastus-account aiflux-fdpo-dev-foundry `
-     --sweden-account aiflux-fdpo-dev-foundry-swc `
+     --subscription 00000000-0000-0000-0000-000000000000 `
+     --resource-group rg-aiflux-example-dev `
+     --eastus-account aiflux-example-dev-foundry `
+     --sweden-account aiflux-example-dev-foundry-swc `
      --gateway-principal-id '<gateway-uami-object-id>' --post-deploy --smoke
    ```
 
@@ -142,7 +165,7 @@ There is no Azure apply in this implementation task.
    ```powershell
    python gateway\tools\verify_adapter.py `
      --subscription <subscription-id> `
-     --resource-group rg-aiflux-fdpo-dev `
+     --resource-group rg-aiflux-example-dev `
      --apim <apim-name> `
      --test-subscription <approved-test-subscription-name> `
      --portal-origin https://<customer-portal-host> `

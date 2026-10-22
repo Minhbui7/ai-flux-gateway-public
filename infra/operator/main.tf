@@ -181,7 +181,7 @@ resource "azurerm_federated_identity_credential" "deployment" {
   user_assigned_identity_id = azurerm_user_assigned_identity.deployment.id
   issuer                    = "https://token.actions.githubusercontent.com"
   audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "repo:ajanakiraman_microsoft/ai-flux-gateway:environment:aiflux-development"
+  subject                   = "repo:REPLACE_WITH_GITHUB_OWNER/REPLACE_WITH_REPOSITORY:environment:aiflux-development"
 }
 
 resource "azurerm_role_assignment" "deployment" {

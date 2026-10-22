@@ -1,7 +1,7 @@
-subscription_id     = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
-resource_group_name = "rg-aiflux-fdpo-dev"
+subscription_id     = "00000000-0000-0000-0000-000000000000"
+resource_group_name = "rg-aiflux-example-dev"
 location            = "eastus"
-name_prefix         = "aiflux-fdpo-dev"
+name_prefix         = "aiflux-example-dev"
 address_space       = "10.240.0.0/16"
 
 # Candidate only: B2s (2 vCPU / 4 GiB), E4 32 GiB Standard SSD, Ubuntu 24.04 LTS.

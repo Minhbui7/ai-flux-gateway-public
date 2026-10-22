@@ -1,5 +1,11 @@
 # Hybrid development Terraform and local operator runbook
 
+The versioned-controls sections describe staged infrastructure preparation for a
+dependent application release. Keep those feature switches off until the matching
+runtime and migration are installed. This public branch preserves manual main-root
+RBAC handoff and Azure Blob main/model state; historical local-state observations
+below are not launcher instructions. Follow [the current deployment runbook](deployment.md).
+
 Customer installations use the [guarded-pilot deployment runbook](deployment.md).
 The environment-specific history below is not customer configuration or evidence
 of current customer readiness.
@@ -31,7 +37,7 @@ The code supports `dev_admin_settings_enabled=false` by default. No live deploym
 or activation is implied. See [the settings contract](control-plane.md#admin-managed-gateway-settings)
 for exact bounds, failure behavior, ownership and propagation limits.
 
-For a separately approved rollout: migrate SQL to `0002`, package the API bootstrap
+For a separately approved rollout: migrate SQL through `0003`, package the API bootstrap
 fragment and admin portal, retain all existing explicit inference/safety approvals,
 then review a Terraform plan enabling `dev_admin_settings_enabled`. This creates
 one denied inbound settings fragment per deployed guarded API, assigns the API
@@ -58,10 +64,54 @@ configured Terraform values and removes managed quota enforcement; it is a
 potential relaxation, not a safe automatic rollback. Do not downgrade SQL revision
 history or roll back to application code lacking the new schema during recovery.
 
-Customer packaging must carry migration `0002`, the bootstrap fragment, the
+Customer packaging must carry migrations through `0003`, the bootstrap fragment, the
 scope/identity/ownership contract and operator activation/recovery instructions.
 Future Auto routing must decide whether quotas attach to the requested alias,
 resolved alias or both; selection/retry must not bypass subscription budgets.
+
+### Versioned controls rollout
+
+Migration `0003` is required by the new API, even before feature activation.
+The legacy contract above remains available when v2 is disabled.
+The launcher exposes the following optional customer keys (all flags default
+false; RPM defaults 2), mapped to Terraform's `dev_`-prefixed variables:
+
+- `admin_settings_provisioned`: create scopes/fragments/narrow RBAC without
+  referencing the runtime fragment in invariant policies.
+- `gateway_controls_v2_enabled`: provision candidate concurrency forwarding
+  structure and enable the versioned application contract.
+- `protected_material_available`: operator assertion that regional API, managed
+  identity access, full-output coverage and fail-closed behavior were validated.
+- `monthly_request_quota_available`: operator assertion that calendar-month native
+  counters and lifecycle/reset metadata passed acceptance.
+- `safety_relaxation_allowed`: explicitly allow disabling input/output scans or
+  prompt protection in Custom; PII redaction remains mandatory.
+- `gateway_max_rpm`: approved request/minute maximum; does not change provider capacity.
+
+For a separately approved release:
+
+1. Back up private SQL, migrate to `0003`, build the actual API/admin images and
+   review a complete Terraform plan. Keep all current images/security/limits in
+   protected inputs until a real image rollout is approved.
+2. Provision settings and v2 candidates while `admin_settings_enabled=false`.
+   Runtime fragment RBAC remains exact-resource-scoped, with no API-policy or
+   forwarding-fragment write permission for the application identity.
+3. Initialize a complete versioned snapshot. Migration preserves current thresholds
+   and scanning (Custom, protected-text detection off); do not claim Strict yet.
+   Existing differing API-wide safety settings need explicit operator alignment.
+4. Verify literal-tier concurrency, native quota/error semantics, detector identity/
+   availability, Unicode/full-output coverage and policy compilation on Basic v2.
+   Capability flags are assertions, not a substitute for those checks.
+5. Review separate activation of `admin_settings_enabled`, including the new
+   aggregate counter namespace and acknowledged cutover/reset behavior. Canary one
+   team using both keys/models/routes and confirm 429/403, usage and both portals.
+6. For urgent tightening, block traffic through the existing inference gate first.
+   Rollback by republishing a reviewed snapshot; removing activation flags can
+   relax controls and is not an automatic safe rollback.
+
+No live activation, new paid resource, capacity increase or public/native `/v1`
+release is implied by this implementation. Protected-text calls add cost/latency;
+check B1 headroom and Content Safety quotas before raising concurrency/RPM.
 
 ## Model and portal expansion (2026-10-14)
 
@@ -157,7 +207,7 @@ team provision remains SQL-owned; use portal Reconcile after fixing APIM rather
 than creating duplicate requests. The original single-key `/dev/v1` product and
 each adapter subscription's inference bounds are unchanged.
 
-Use the existing protected state and ignored deployed inputs. Review the
+Use the existing protected local state and ignored deployed inputs. Review the
 full saved plan before applying; no `-target`. Pin all three successful ACR build
 outputs by digest, specifying both subscription and resource group explicitly
 to avoid shared CLI defaults. Final edge TLS, native translation and
@@ -229,7 +279,7 @@ Actual deployed validation and organizational acceptance require separate
 evidence; key-discovery telemetry headers alone are not compliance proof.
 
 To fulfill Microsoft Secure Future Initiative (SFI) requirements for Entra ID Application
-Registrations (specifically App ID `26f09831-946d-4dd3-874a-9d573ec7e4f4` / `aiflux-fdpo-dev-api`),
+Registrations (specifically App ID `00000000-0000-4000-8000-000000000003` / `aiflux-example-dev-api`),
 the control-plane API supports MISE (Microsoft Identity Service Essentials) authentication:
 - **App Service Sidecar**: Configured via `mise_sidecar_enabled = true` in Terraform, which attaches
   the official `mcr.microsoft.com/entra-sdk/auth-sidecar:latest` sidecar container to the API Linux Web App
@@ -256,7 +306,7 @@ still the configured Entra SQL administrator, both runtime identity object/clien
 IDs match deployment evidence, and the API's production audience, home tenant,
 bootstrap object ID and managed-identity client ID are configured. SQL is Online
 at S0 with public access Disabled, Proxy policy and zero firewall rules.
-The operator laptop resolves the SQL FQDN to public `20.53.46.128`, and a bounded
+The operator laptop resolves the SQL FQDN to public `203.0.113.10`, and a bounded
 TCP probe of private `10.240.3.6:1433` timed out. The repository virtual environment
 has `pyodbc`, but Windows has no ODBC Driver 18; installing a driver alone would
 not fix the missing private route.
@@ -310,14 +360,14 @@ logs/content-share refresh updates, which were not reapplied. Local checks pass:
 22 main-root mock tests, eight operator tests, three state tests, 17 gateway
 contracts and the disabled bundle validator.
 
-The existing, externally owned RG is `rg-aiflux-fdpo-dev`, subscription
-`4d75ed7f-75ab-4db6-b1f3-263f240d1450`, location `eastus`. It remains a data source:
+The existing, externally owned RG is `rg-aiflux-example-dev`, subscription
+`00000000-0000-0000-0000-000000000000`, location `eastus`. It remains a data source:
 Terraform does not create/import/destroy the RG or modify unrelated workloads.
 APIM-first provisioning has succeeded: Basic v2 APIM, Monitor/App Insights, RBAC
 Key Vault and Content Safety exist. The remaining deployment is explicitly partial,
 not a same-day readiness claim. Initial dedicated Language provisioning returned
 `SpecialFeatureOrQuotaIdRequired`; the approved replacement is the Microsoft Foundry
-umbrella `AIServices` S0 resource `aiflux-fdpo-dev-foundry` in East US. Terraform
+umbrella `AIServices` S0 resource `aiflux-example-dev-foundry` in East US. Terraform
 created only that resource and its gateway-scoped `Cognitive Services User` role
 assignment (two additions, zero changes/deletions); Content Safety was retained.
 A synthetic-email Language PII REST smoke test using an operator AAD token detected
@@ -339,8 +389,8 @@ ARM currently still reports Key Vault and Function Storage public network access
 as `Disabled`, despite the operator's report of manual changes. No access mutation
 or repeated enable attempt is made until the approved state is observed live.
 Shared keys and anonymous blobs remain disabled.
-The independent prerequisites apply created Basic ACR `aifluxfdpodevacr`,
-P1v3 plan `aiflux-fdpo-dev-apps-plan`, Function storage `aifluxfdpodevfunc`,
+The independent prerequisites apply created Basic ACR `aifluxexampledevacr`,
+P1v3 plan `aiflux-example-dev-apps-plan`, Function storage `aifluxexampledevfunc`,
 the VNet/AppGW subnet and API/customer/admin/ingestion managed identities with
 resource-scoped registry/Monitor/storage/APIM roles. Basic ACR, remote builds and
 the idle P1v3 plan add dev costs even without running apps.
@@ -385,11 +435,9 @@ Live APIM verification returned Product state `notPublished` with subscription
 and approval required; anonymous `/v1/models` returned 503, retaining the
 fail-closed disabled gateway rather than enabling inference.
 
-The main root pins Terraform `1.12.1`, AzureRM `5.9.0` and
-AzAPI `2.13.0`. Providers do not auto-register resource providers. Use Azure CLI
-authentication and protected state; the main/model roots now
-use separate Azure Blob keys (see the customer deployment runbook). Do not set
-shared Azure CLI account defaults.
+The main root pins Terraform `~>1.16.0` (locally `1.16.5`), AzureRM `5.9.0` and
+AzAPI `2.13.0`. Providers do not auto-register resource providers. Use local Azure CLI
+authentication and protected local state; do not set shared Azure CLI account defaults.
 
 ## Cumulative stages and resource inventory
 
@@ -477,7 +525,7 @@ LLM message capture. Public connectivity never relaxes tenant/member authorizati
 ## Required inputs and remaining blockers
 
 Copy `infra\terraform\environments\fdpo.tfvars.example` to an ignored `.tfvars`.
-It selects APIM first, approval false, publisher `ajanakiraman@microsoft.com`,
+It selects APIM first, approval false, publisher `operator@example.com`,
 P1v3/S0 and the approved isolated network. Complete externally verified inputs:
 
 1. Basic v2/East US availability, quota, names and current costs; WAF_v2 zones and
@@ -500,8 +548,8 @@ P1v3/S0 and the approved isolated network. Complete externally verified inputs:
    registry with explicit subscription and RG, uploading the current local source,
    not a stale Git branch. `.dockerignore` excludes all `infra`, Terraform inputs/
    state/plans, local credentials and dependencies from the build context.
-5. The public DNS label `aiflux-gateway-dev` and hostname
-   `aiflux-gateway-dev.eastus.cloudapp.azure.com` now resolve to the bootstrap IP
+5. The public DNS label `aiflux-example-gateway-dev` and hostname
+   `aiflux-example-gateway-dev.eastus.cloudapp.azure.com` now resolve to the bootstrap IP
    `134.33.136.180`. Let’s Encrypt staging and production HTTP-01 issuance both
    succeeded. The production PFX is in private Key Vault secret `aiflux-dev-tls`;
    Terraform uses its **versionless URI**. Application Gateway HTTPS remains pending
@@ -528,27 +576,24 @@ P1v3/S0 and the approved isolated network. Complete externally verified inputs:
 
 Use an existing authorized Entra operator with Azure CLI; do not create identities
 or registrations merely to run Terraform. Explicitly pass the subscription to Azure
-commands and verify provider identity/subscription matches. The main and models
-roots now use a separately configured Azure Blob backend; use approved network
-access and Storage Blob Data Contributor on its private container/account. Keep
-saved plans and pre-migration local state backups on an encrypted, access-controlled
-local disk outside source control and shared sync folders. Back up securely and
-allow one writer only. No operator VM is mandatory for infrastructure planning.
+commands and verify provider identity/subscription matches. Keep state/plan files on
+an **encrypted, access-controlled local disk**, excluded from source control and shared
+sync folders; Terraform local state is not itself encrypted. Back up securely and allow
+one writer only. No blob backend, state account, bootstrap or VM is mandatory today.
 
 `infra\operator` and `infra\state` remain **optional deferred private-design artifacts**,
 validated locally but not prerequisites and not consumed by this public root.
-Their private backend/OIDC examples do not configure the main/model backends.
-Any other environment's remote-state migration requires a separate reviewed
-auth/firewall/locking plan; do not toggle or migrate ownership blindly after
-resources exist.
+Their private backend/OIDC examples do not configure the main local backend.
+Any later remote-state migration requires a separate reviewed auth/firewall/locking plan;
+do not toggle or migrate ownership blindly after resources exist.
 
 Use this reviewed operator route only after the recorded policy/entitlement
 blockers have approved resolutions. Do not repeatedly retry those failures:
 
 ```powershell
 # Check an existing Azure CLI login without changing shared subscription defaults.
-az account show --subscription 4d75ed7f-75ab-4db6-b1f3-263f240d1450
-$env:ARM_SUBSCRIPTION_ID = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+az account show --subscription 00000000-0000-0000-0000-000000000000
+$env:ARM_SUBSCRIPTION_ID = "00000000-0000-0000-0000-000000000000"
 # Azure CLI auth is used; remove stale ARM OIDC/client-secret overrides from this
 # process only before proceeding. Do not print credentials.
 & infra\.tools\terraform.exe "-chdir=infra\terraform" init -input=false
@@ -695,7 +740,7 @@ return 403 over HTTP. Direct operator API checks remain health/ready 200 and ano
 The default `python-requests` client identifier receives a WAF 403, while the
 application-specific `AIFLUX-TLS/1` identifier reaches the exact challenge route.
 WAF Prevention/managed rules were not relaxed. Staging validation and production
-issuance then completed for `aiflux-gateway-dev.eastus.cloudapp.azure.com`; the
+issuance then completed for `aiflux-example-gateway-dev.eastus.cloudapp.azure.com`; the
 production certificate metadata reports Let’s Encrypt and expiry `2027-01-09T09:15:36Z`.
 The one-shot runner reported private-key disk writes as false and restoration as
 successful. No certificate or secret value was read back or printed.

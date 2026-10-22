@@ -17,8 +17,8 @@ def test_portal_callbacks_include_both_hosts_and_preserve_existing(component, pa
     app = {"spa": {"redirectUris": [existing]}}
     expected = {
         existing,
-        "https://aiflux-gateway-dev.eastus.cloudapp.azure.com" + path,
-        f"https://aiflux-fdpo-dev-{component}.azurewebsites.net{path}",
+        "https://aiflux-example-gateway-dev.eastus.cloudapp.azure.com" + path,
+        f"https://aiflux-example-dev-{component}.azurewebsites.net{path}",
     }
 
     result = portal_redirect_uris(app, component, path)

@@ -1,6 +1,5 @@
 """Offline backend/region regressions; also runnable using stdlib unittest only."""
 
-import json
 import os
 import tempfile
 import unittest
@@ -26,9 +25,7 @@ class DeploymentBackendTests(unittest.TestCase):
         self.root = self.base / "source"
         for root in ("terraform", "models"):
             (self.root / "infra" / root).mkdir(parents=True)
-            (self.root / "infra" / root / "versions.tf").write_text(
-                'terraform { backend "azurerm" {} }\n'
-            )
+            (self.root / "infra" / root / "versions.tf").write_text('terraform { backend "azurerm" {} }\n')
         self.directory = self.base / "environment"
         self.directory.mkdir()
         self.config = read_json(ROOT / "infra/deployment/customer.example.json")
@@ -36,8 +33,12 @@ class DeploymentBackendTests(unittest.TestCase):
             ("tenant_id", "subscription_id", "bootstrap_object_id", "sql_admin_object_id"), 1
         ):
             self.config[key] = f"00000000-0000-0000-0000-{index:012d}"
-        self.config.update(location="southeastasia", sql_location="southeastasia",
-                           operator_ip="8.8.8.8", dns_label="customer-pilot")
+        self.config.update(
+            location="southeastasia",
+            sql_location="southeastasia",
+            operator_ip="8.8.8.8",
+            dns_label="customer-pilot",
+        )
         self.config["attestations"] = dict.fromkeys(ATTESTATIONS, True)
         self.backend = {
             "resource_group_name": "backend-rg",
@@ -83,6 +84,22 @@ class DeploymentBackendTests(unittest.TestCase):
         write_json(path, self.config)
         return load_config(path)
 
+    def test_australian_models_use_distinct_remote_key_and_profile_binding(self):
+        self.config.update(deployment_profile="australiaeast-luna", sql_location="australiaeast")
+        self.config.pop("location")
+        model_root = self.root / "infra" / "models-australiaeast"
+        model_root.mkdir()
+        (model_root / "main.tf").write_text('terraform { backend "azurerm" {} }\n')
+        self.validate()
+        self.launcher.tf("terraform", "init", "-input=false")
+        self.launcher.tf("models-australiaeast", "init", "-input=false")
+        content = (self.directory / "models-australiaeast.backend.hcl").read_text()
+        self.assertIn('key = "' + self.backend["models_key"] + '"', content)
+        self.assertNotIn('key = "' + self.backend["main_key"] + '"', content)
+        self.config["deployment_profile"] = "legacy"
+        with self.assertRaisesRegex(DeploymentError, "binding changed"):
+            self.launcher.tf("terraform", "output", "-json")
+
     def test_southeastasia_keeps_models_and_security(self):
         self.validate()
         values = self.launcher.main_inputs("prerequisites")
@@ -96,13 +113,17 @@ class DeploymentBackendTests(unittest.TestCase):
         self.assertNotIn("dev_openai_inference_enabled", values)
         with patch("scripts.deployment.launcher.ROOT", ROOT):
             catalog = self.launcher.catalog()
-        self.assertEqual({backend["region"] for model in catalog["models"]
-                          for backend in model["backends"]}, {"eastus", "swedencentral"})
+        self.assertEqual(
+            {backend["region"] for model in catalog["models"] for backend in model["backends"]},
+            {"eastus", "swedencentral"},
+        )
 
     def test_invalid_region_and_backend_inputs_fail_closed(self):
         mutations = (
-            {"location": "swedencentral"}, {"model_location": "southeastasia"},
-            {"sql_location": "unknown"}, {"backend": None},
+            {"location": "swedencentral"},
+            {"model_location": "southeastasia"},
+            {"sql_location": "unknown"},
+            {"backend": None},
             {"backend": {**self.backend, "access_key": "not-allowed"}},
             {"backend": {**self.backend, "container_name": "other"}},
             {"backend": {**self.backend, "storage_account_name": "invalid-account"}},
@@ -133,10 +154,13 @@ class DeploymentBackendTests(unittest.TestCase):
         self.assertTrue(any(command[2] == "apply" for command in terraform))
         self.assertTrue(any(command[2] == "output" for command in terraform))
         for command in terraform:
-            self.assertFalse(any(arg.startswith(("-state", "-migrate-state", "-force-copy")) for arg in command))
+            self.assertFalse(
+                any(arg.startswith(("-state", "-migrate-state", "-force-copy")) for arg in command)
+            )
         self.assertEqual(set(self.overrides), {None})
-        self.assertEqual(set(self.data_dirs), {str(self.directory / "terraform-data"),
-                                               str(self.directory / "models-data")})
+        self.assertEqual(
+            set(self.data_dirs), {str(self.directory / "terraform-data"), str(self.directory / "models-data")}
+        )
         self.assertFalse(any(self.root.glob("infra/*/backend_override.tf")))
         self.assertNotIn("TF_DATA_DIR", os.environ)
         blobs = [command for command in self.commands if command[0] == "az"]
@@ -147,9 +171,7 @@ class DeploymentBackendTests(unittest.TestCase):
 
     def test_declared_remote_backends_do_not_get_duplicate_overrides(self):
         for root in ("terraform", "models"):
-            (self.root / "infra" / root / "versions.tf").write_text(
-                'terraform { backend "azurerm" {} }\n'
-            )
+            (self.root / "infra" / root / "versions.tf").write_text('terraform { backend "azurerm" {} }\n')
         self.launcher.tf("terraform", "init", "-input=false")
         self.launcher.tf("models", "init", "-input=false")
         terraform = [command for command in self.commands if command[0] == "terraform"]
@@ -161,9 +183,7 @@ class DeploymentBackendTests(unittest.TestCase):
 
     def test_declared_remote_root_rejects_missing_backend_configuration(self):
         del self.config["backend"]
-        (self.root / "infra/terraform/versions.tf").write_text(
-            'terraform { backend "azurerm" {} }\n'
-        )
+        (self.root / "infra/terraform/versions.tf").write_text('terraform { backend "azurerm" {} }\n')
         with self.assertRaisesRegex(DeploymentError, "Azure Blob backend"):
             self.launcher.tf("terraform", "init", "-input=false")
         self.assertEqual(self.commands, [])
@@ -218,7 +238,13 @@ class DeploymentBackendTests(unittest.TestCase):
         self.assertFalse((self.root / ".deployment/terraform-root-lock/deployment.lock").exists())
 
     def test_credential_or_workspace_injection_is_refused(self):
-        for name in ("ARM_ACCESS_KEY", "ARM_SAS_TOKEN", "ARM_CLIENT_SECRET", "TF_CLI_ARGS_init", "TF_WORKSPACE"):
+        for name in (
+            "ARM_ACCESS_KEY",
+            "ARM_SAS_TOKEN",
+            "ARM_CLIENT_SECRET",
+            "TF_CLI_ARGS_init",
+            "TF_WORKSPACE",
+        ):
             with self.subTest(name=name), patch.dict(os.environ, {name: "unexpected"}):
                 with self.assertRaisesRegex(DeploymentError, "overrides"):
                     self.launcher.tf("terraform", "init", "-input=false")

@@ -1,19 +1,19 @@
 mock_provider "azurerm" {
   mock_data "azurerm_resource_group" {
     defaults = {
-      id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-state-test"
+      id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-state-test"
     }
   }
 }
 mock_provider "azapi" {}
 
 variables {
-  subscription_id            = "4d75ed7f-75ab-4db6-b1f3-263f240d1450"
+  subscription_id            = "00000000-0000-0000-0000-000000000000"
   resource_group_name        = "rg-state-test"
   location                   = "eastus"
   storage_account_name       = "aifluxteststate"
-  private_endpoint_subnet_id = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-state-test/providers/Microsoft.Network/virtualNetworks/operator/subnets/state"
-  private_dns_zone_id        = "/subscriptions/4d75ed7f-75ab-4db6-b1f3-263f240d1450/resourceGroups/rg-state-test/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  private_endpoint_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-state-test/providers/Microsoft.Network/virtualNetworks/operator/subnets/state"
+  private_dns_zone_id        = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-state-test/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
   runner_principal_id        = "00000000-0000-0000-0000-000000000001"
   deployment_approved        = true
 }

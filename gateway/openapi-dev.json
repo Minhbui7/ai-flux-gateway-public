@@ -41,7 +41,7 @@
                         "properties": {
                           "id": {
                             "type": "string",
-                            "enum": ["gpt-5.6-luna", "gpt-5.6-sol"]
+                            "description": "An approved alias returned by this deployment's GET /models."
                           },
                           "object": {
                             "type": "string",
@@ -85,7 +85,7 @@
                 "properties": {
                   "model": {
                     "type": "string",
-                    "enum": ["gpt-5.6-luna", "gpt-5.6-sol"]
+                    "description": "An approved alias currently returned by this deployment's GET /models."
                   },
                   "messages": {
                     "type": "array",
