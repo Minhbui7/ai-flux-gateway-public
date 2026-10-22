@@ -1,7 +1,6 @@
 # Hybrid development Terraform and local operator runbook
 
-The versioned-controls sections describe staged infrastructure preparation for a
-dependent application release. Keep those feature switches off until the matching
+The versioned-controls sections describe staged activation after the matching
 runtime and migration are installed. This public branch preserves manual main-root
 RBAC handoff and Azure Blob main/model state; historical local-state observations
 below are not launcher instructions. Follow [the current deployment runbook](deployment.md).

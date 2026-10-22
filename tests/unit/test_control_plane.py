@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 
 def create_key(env, name="Platform"):
     response = env.client.post(
-        "/api/subscriptions",
-        json={"name": name, "team": "Engineering"},
-        headers=env.customer | {"Idempotency-Key": env.idempotency()},
+        "/api/admin/subscriptions",
+        json={"name": name, "team": "Engineering", "organization_id": env.orgs["customer"]},
+        headers=env.admin | {"Idempotency-Key": env.idempotency()},
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -64,53 +64,54 @@ def test_catalog_requires_explicit_validation(env):
 
 
 def test_idempotent_subscription_and_conflicting_replay(env):
-    headers = env.customer | {"Idempotency-Key": env.idempotency()}
-    payload = {"name": "Platform", "team": "Team"}
-    first = env.client.post("/api/subscriptions", headers=headers, json=payload)
-    second = env.client.post("/api/subscriptions", headers=headers, json=payload)
+    headers = env.admin | {"Idempotency-Key": env.idempotency()}
+    payload = {"name": "Platform", "team": "Team", "organization_id": env.orgs["customer"]}
+    first = env.client.post("/api/admin/subscriptions", headers=headers, json=payload)
+    second = env.client.post("/api/admin/subscriptions", headers=headers, json=payload)
     assert first.status_code == second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
     assert len(env.apim.calls) == 1
     assert (
-        env.client.post("/api/subscriptions", headers=headers, json=payload | {"team": "Other"}).status_code
+        env.client.post(
+            "/api/admin/subscriptions", headers=headers, json=payload | {"team": "Other"},
+        ).status_code
         == 409
     )
-    assert env.client.post("/api/subscriptions", headers=env.customer, json=payload).status_code == 422
+    assert env.client.post("/api/admin/subscriptions", headers=env.admin, json=payload).status_code == 422
+    assert env.client.post("/api/subscriptions", headers=env.customer, json=payload).status_code == 403
 
 
 def test_provision_failure_is_visible_and_recoverable(env):
     env.apim.fail = True
-    headers = env.customer | {"Idempotency-Key": env.idempotency()}
-    body = {"name": "Team", "team": "Team"}
-    assert env.client.post("/api/subscriptions", json=body, headers=headers).status_code == 502
+    headers = env.admin | {"Idempotency-Key": env.idempotency()}
+    body = {"name": "Team", "team": "Team", "organization_id": env.orgs["customer"]}
+    assert env.client.post("/api/admin/subscriptions", json=body, headers=headers).status_code == 502
     listed = env.client.get("/api/subscriptions", headers=env.customer).json()
     assert listed["items"][0]["state"] == "failed"
     env.apim.fail = False
-    retry = env.client.post("/api/subscriptions", json=body, headers=headers)
+    retry = env.client.post("/api/admin/subscriptions", json=body, headers=headers)
     assert retry.status_code == 201 and retry.json()["state"] == "active"
 
 
 def test_keys_reveal_rotate_suspend_and_cross_org_denial(env):
     row = create_key(env)
     sid = row["id"]
-    for action in ("reveal", "rotate"):
-        response = env.client.post(
-            f"/api/subscriptions/{sid}/{action}", json={"key": "primary"}, headers=env.admin
-        )
-        assert response.status_code == 404
+    assert env.client.post(
+        f"/api/subscriptions/{sid}/reveal", json={}, headers=env.admin,
+    ).status_code == 404
     revealed = env.client.post(f"/api/subscriptions/{sid}/reveal", headers=env.customer, json={})
     assert revealed.status_code == 200
     assert revealed.headers["cache-control"] == "no-store"
     assert revealed.json()["key"] == "synthetic-test-key"
     assert (
         env.client.post(
-            f"/api/subscriptions/{sid}/rotate", headers=env.customer, json={"key": "secondary"}
+            f"/api/admin/subscriptions/{sid}/rotate", headers=env.admin, json={"key": "secondary"}
         ).status_code
         == 200
     )
     assert (
         env.client.put(
-            f"/api/subscriptions/{sid}/state", headers=env.customer, json={"state": "suspended"}
+            f"/api/admin/subscriptions/{sid}/state", headers=env.admin, json={"state": "suspended"}
         ).json()["state"]
         == "suspended"
     )

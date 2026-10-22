@@ -88,6 +88,13 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; margin: .75rem 0; 
 .check { display: flex; gap: .5rem; align-items: center; margin: .4rem 0; }
 .form-row { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; } .form-row .field { flex: 1 1 200px; } .form-row .btn { margin-bottom: .6rem; }
 .grid-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 .9rem; } .form-actions { grid-column: 1 / -1; }
+.gateway-form { display: grid; gap: 1rem; }
+.gateway-limit-fields, .gateway-interfaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: .75rem 1rem; }
+.gateway-interfaces .panel { margin-bottom: 0; }
+.gateway-interfaces h2 { margin: 0; font-size: 1rem; }
+.gateway-advanced { grid-column: 1 / -1; margin-top: 1rem; }
+.gateway-advanced summary { cursor: pointer; padding: .5rem 0; font-weight: 600; }
+.gateway-form fieldset { min-width: 0; }
 .filters { display: flex; gap: 1rem; flex-wrap: wrap; } .filters .field { min-width: 200px; }
 .pager { display: flex; gap: 1rem; align-items: center; justify-content: center; margin: 1rem 0; }
 
@@ -123,6 +130,13 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; margin: .75rem 0; 
 .usage-charts { display: grid; gap: .8rem; }
 .chart-panel { border: 1px solid var(--line); border-radius: 8px; padding: .8rem; min-width: 0; }
 .chart-panel h2 { font-size: .95rem; }
+.model-token-chart { --cp-accent: #fd8ea1; --cp-link: #4da6ff; --cp-success: #4ade80; --cp-warning: #fbbf24; --cp-danger: #f87171; --cp-text-soft: #b0b0b0; --cp-border-strong: #5f5f5f; --cp-text: #dedede; font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; margin-top: .8rem; }
+.model-token-legend { display: flex; flex-wrap: wrap; gap: .5rem 1rem; list-style: none; padding: 0; }
+.model-token-legend li { display: flex; align-items: center; gap: .4rem; overflow-wrap: anywhere; min-width: 0; }
+.model-token-legend svg { flex-shrink: 0; }
+.model-token-pattern { stroke: var(--cp-border-strong); fill: var(--cp-border-strong); stroke-width: 1; }
+.model-token-cursor { fill: none; stroke: var(--cp-text); stroke-width: 1; pointer-events: none; }
+.model-token-chart .chart-tooltip { overflow-wrap: anywhere; }
 .usage-chart { display: block; width: 100%; height: auto; max-height: 230px; touch-action: pan-y; cursor: crosshair; }
 .chart-grid { stroke: var(--line); stroke-width: 1; }
 .chart-axis-label { fill: var(--ink-dim); font-size: 11px; }

@@ -1,6 +1,7 @@
 import type {
-  CatalogModel, GatewayConfiguration, GatewayRevision, GatewayScope, GatewaySettings,
-  KeyName, Me, Member, Organization, Paged, Price, PriceInput, SafetyEvent,
+  AdminSubscription,
+  CatalogModel, GatewayConfigurationUnion, GatewayRevision, GatewayScope, GatewaySettings, GatewayTarget, SafetyConfiguration,
+  KeyName, Me, Member, ModelTokenSeries, Organization, Paged, Price, PriceInput, SafetyEvent,
   Subscription, SubscriptionState, UsageFilters, UsagePage, UsageQuery, UsageSeries, UsageSeriesQuery,
 } from "./types";
 
@@ -73,15 +74,21 @@ export class ControlApi {
   me = () => this.json<Me>("/me");
   models = () => this.json<Paged<CatalogModel>>("/models");
   subscriptions = (offset = 0, limit = 50) => this.json<Paged<Subscription>>(`/subscriptions${qs({ offset, limit })}`);
+  adminSubscriptions = (offset = 0, limit = 50, organizationId?: string) =>
+    this.json<Paged<AdminSubscription>>(`/admin/subscriptions${qs({ offset, limit, organization_id: organizationId })}`);
+  adminCreateSubscription = (input: { organization_id: string; name: string; team: string }, idempotencyKey: string) =>
+    this.json<AdminSubscription>("/admin/subscriptions", { method: "POST", json: input, headers: { "Idempotency-Key": idempotencyKey } });
+  adminRevealKey = async (id: string, key: KeyName) =>
+    (await this.json<{ key: string }>(`/admin/subscriptions/${encodeURIComponent(id)}/reveal`, { method: "POST", json: { key } })).key;
   createSubscription = (input: { name: string; team: string }, idempotencyKey: string) =>
     this.json<Subscription>("/subscriptions", { method: "POST", json: input, headers: { "Idempotency-Key": idempotencyKey } });
   revealKey = async (id: string, key: KeyName) =>
     (await this.json<{ key: string }>(`/subscriptions/${encodeURIComponent(id)}/reveal`, { method: "POST", json: { key } })).key;
   rotateKey = (id: string, key: KeyName) =>
-    this.json<{ state: SubscriptionState }>(`/subscriptions/${encodeURIComponent(id)}/rotate`, { method: "POST", json: { key } });
+    this.json<{ state: SubscriptionState }>(`/admin/subscriptions/${encodeURIComponent(id)}/rotate`, { method: "POST", json: { key } });
   setState = (id: string, state: "active" | "suspended") =>
-    this.json<Subscription>(`/subscriptions/${encodeURIComponent(id)}/state`, { method: "PUT", json: { state } });
-  reconcile = (id: string) => this.json<Subscription>(`/subscriptions/${encodeURIComponent(id)}/reconcile`, { method: "POST" });
+    this.json<AdminSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/state`, { method: "PUT", json: { state } });
+  reconcile = (id: string) => this.json<AdminSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/reconcile`, { method: "POST" });
 
   usage = (q: UsageQuery) => this.json<UsagePage>(`/usage${qs({ days: q.days, subscription_id: q.subscription_id, model: q.model, offset: q.offset, limit: q.limit })}`);
   adminUsage = (q: UsageQuery) =>
@@ -92,6 +99,8 @@ export class ControlApi {
     this.json<Paged<string>>(`/admin/usage/models${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id })}`);
   usageSeries = (q: UsageSeriesQuery) =>
     this.json<UsageSeries>(`/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, model: q.model, start: q.start, end: q.end })}`);
+  modelTokens = (q: UsageSeriesQuery) =>
+    this.json<ModelTokenSeries>(`/usage/model-tokens${qs({ days: q.days, subscription_id: q.subscription_id, model: q.model, start: q.start, end: q.end })}`);
   adminUsageSeries = (q: UsageSeriesQuery) =>
     this.json<UsageSeries>(`/admin/usage/timeseries${qs({ days: q.days, subscription_id: q.subscription_id, organization_id: q.organization_id, model: q.model, start: q.start, end: q.end })}`);
 
@@ -118,12 +127,21 @@ export class ControlApi {
 
   prices = () => this.json<Paged<Price>>("/admin/prices");
   gatewaySettings = () => this.json<Paged<GatewaySettings>>("/admin/gateway-settings");
-  saveGatewaySettings = (scope: GatewayScope, expectedVersion: number, configuration: GatewayConfiguration, reason: string) =>
+  saveGatewaySettings = (scope: GatewayScope, expectedVersion: number, configuration: GatewayConfigurationUnion, reason: string) =>
     this.json<GatewaySettings>(`/admin/gateway-settings/${scope}`, { method: "PUT", json: { expected_version: expectedVersion, configuration, reason } });
   reconcileGatewaySettings = (scope: GatewayScope, expectedVersion: number) =>
     this.json<GatewaySettings>(`/admin/gateway-settings/${scope}/reconcile`, { method: "POST", json: { expected_version: expectedVersion } });
   gatewaySettingsHistory = (scope: GatewayScope, offset = 0, limit = 10) =>
     this.json<Paged<GatewayRevision>>(`/admin/gateway-settings/${scope}/history${qs({ offset, limit })}`);
+  gatewayTargets = (offset = 0, limit = 100, organizationId?: string) =>
+    this.json<Paged<GatewayTarget>>(`/admin/gateway-targets${qs({ offset, limit, organization_id: organizationId })}`);
+  contentSafetySettings = () => this.json<Paged<GatewaySettings>>("/admin/content-safety-settings");
+  saveContentSafetySettings = (scope: GatewayScope, expectedVersion: number, configuration: SafetyConfiguration, reason: string, acknowledgeRelaxation: boolean) =>
+    this.json<GatewaySettings>(`/admin/content-safety-settings/${scope}`, { method: "PUT", json: { expected_version: expectedVersion, configuration, reason, acknowledge_relaxation: acknowledgeRelaxation } });
+  reconcileContentSafetySettings = (scope: GatewayScope, expectedVersion: number) =>
+    this.json<GatewaySettings>(`/admin/content-safety-settings/${scope}/reconcile`, { method: "POST", json: { expected_version: expectedVersion } });
+  contentSafetySettingsHistory = (scope: GatewayScope, offset = 0, limit = 10) =>
+    this.json<Paged<GatewayRevision>>(`/admin/content-safety-settings/${scope}/history${qs({ offset, limit })}`);
   endPrice = (id: string, effectiveTo: string) =>
     this.json<Price>(`/admin/prices/${encodeURIComponent(id)}/end`, { method: "PUT", json: { effective_to: effectiveTo } });
   createPrice = (input: PriceInput) => this.json<Price>("/admin/prices", { method: "POST", json: input });

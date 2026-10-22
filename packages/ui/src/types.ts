@@ -32,6 +32,14 @@ export interface Subscription {
   created_at: string;
 }
 
+export interface AdminSubscription extends Subscription {
+  organization_id: string;
+  organization_name: string;
+  team_id: string | null;
+  gateway_access: "ready" | "pending" | "not_managed";
+  gateway_message: string | null;
+}
+
 export interface UsageSummary {
   requests: number;
   input_tokens: number;
@@ -86,6 +94,22 @@ export interface UsageSeries {
   start: string;
   end: string;
   interval_seconds: 60;
+}
+
+export interface ModelTokenBucket {
+  start: string;
+  end: string;
+  model: string;
+  requests: number;
+  total_tokens: number | null;
+  missing_token_requests: number;
+}
+
+export interface ModelTokenSeries {
+  items: ModelTokenBucket[];
+  start: string;
+  end: string;
+  interval_seconds: number;
 }
 
 export interface UsageFilters {
@@ -155,9 +179,59 @@ export interface GatewayConfiguration {
   token_quota: number;
   quota_period: QuotaPeriod;
 }
-export interface GatewayRevision {
+export type Concurrency = 1 | 2 | 4 | 8 | 16;
+export type RequestQuotaPeriod = "Daily" | "Monthly";
+export interface GatewayLimits {
+  rpm: number;
+  tpm: number;
+  token_quota: number;
+  quota_period: QuotaPeriod;
+  concurrency: Concurrency;
+  request_quota: number | null;
+  request_quota_period: RequestQuotaPeriod;
+}
+export interface TeamGatewayLimits { organization_id: string; team_id: string; limits: GatewayLimits }
+export interface SubscriptionGatewayLimits { organization_id: string; subscription_id: string; limits: GatewayLimits }
+export type SafetyProfile = "Standard" | "Strict" | "Custom";
+export interface SafetyConfiguration {
+  profile: SafetyProfile;
+  hate: number;
+  violence: number;
+  sexual: number;
+  self_harm: number;
+  prompt_attack: boolean;
+  protected_material: boolean;
+  input_filtering: boolean;
+  output_filtering: boolean;
+}
+export interface ManagedGatewayConfiguration {
+  schema_version: 2;
+  defaults: GatewayLimits;
+  teams: TeamGatewayLimits[];
+  subscriptions: SubscriptionGatewayLimits[];
+  safety: SafetyConfiguration;
+}
+export type GatewayConfigurationUnion = GatewayConfiguration | ManagedGatewayConfiguration;
+export interface GatewayCapabilities {
+  managed_controls_enabled: boolean;
+  concurrency_tiers: number[];
+  protected_material_available: boolean;
+  safety_relaxation_allowed: boolean;
+  monthly_request_quota_available: boolean;
+  enforcement_enabled: boolean;
+  initial_safety_threshold?: number;
+}
+export interface GatewayTarget {
+  organization_id: string;
+  organization_name: string;
+  team_id: string;
+  team: string;
+  subscription_id: string;
+  name: string;
+  state: SubscriptionState;
+}export interface GatewayRevision {
   version: number;
-  configuration: GatewayConfiguration;
+  configuration: GatewayConfigurationUnion;
   reason: string;
   object_id: string;
   occurred_at: string;
@@ -171,4 +245,5 @@ export interface GatewaySettings {
   version: number;
   published_version: number | null;
   desired: GatewayRevision | null;
+  capabilities?: GatewayCapabilities;
 }

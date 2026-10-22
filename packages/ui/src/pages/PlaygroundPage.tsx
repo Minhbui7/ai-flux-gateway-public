@@ -45,7 +45,7 @@ export function PlaygroundPage() {
               const enabled = m.items.filter((x) => x.enabled);
               const active = s.items.filter((x) => x.state === "active");
               if (enabled.length === 0) return <EmptyState title="No enabled models" hint="The catalog is empty, so there is nothing to call." />;
-              if (active.length === 0) return <EmptyState title="No active subscription" hint="Create or activate a team subscription to obtain a key for the playground." />;
+              if (active.length === 0) return <EmptyState title="No active subscription" hint="Contact your administrator to create or activate a team subscription for the playground." />;
               return <Chat models={enabled} subs={active} gatewayUrl={config.gatewayUrl} keys={keys} setKey={setKey} reveal={api.revealKey} />;
             }}
           </AsyncView>

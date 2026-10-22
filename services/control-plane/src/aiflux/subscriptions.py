@@ -9,16 +9,23 @@ from sqlalchemy.orm import Session
 
 from aiflux.apim import ApimClient, ApimError
 from aiflux.auth import Principal
-from aiflux.models import AuditEvent, Organization, TeamSubscription
+from aiflux.models import AuditEvent, Organization, Team, TeamSubscription
 from aiflux.schemas import SubscriptionCreate
 
 log = logging.getLogger(__name__)
 
 
-def audit(db: Session, principal: Principal, action: str, target: str) -> None:
+def team_identity(organization_id: str, name: str) -> str:
+    # Exact label bytes avoid SQL collation accidentally merging differently named teams.
+    return str(uuid5(NAMESPACE_URL, f"aiflux:team:{organization_id}:{name}"))
+
+
+def audit(
+    db: Session, principal: Principal, action: str, target: str, organization_id: str | None = None,
+) -> None:
     db.add(
         AuditEvent(
-            organization_id=principal.organization_id,
+            organization_id=organization_id or principal.organization_id,
             object_id=principal.object_id,
             action=action,
             target_id=target,
@@ -64,6 +71,22 @@ def owned(db: Session, sid: UUID, principal: Principal) -> TeamSubscription:
     return row
 
 
+def admin_owned(db: Session, sid: UUID) -> TeamSubscription:
+    organization_id = db.scalar(
+        select(TeamSubscription.organization_id).where(TeamSubscription.id == str(sid)),
+    )
+    if organization_id is None:
+        raise HTTPException(404, "Subscription not found")
+    lock_organization(db, organization_id)
+    row = db.scalar(
+        select(TeamSubscription).where(TeamSubscription.id == str(sid))
+        .with_hint(TeamSubscription, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+    )
+    if row is None:
+        raise HTTPException(404, "Subscription not found")
+    return row
+
+
 def reconcile(db: Session, row: TeamSubscription, apim: ApimClient, principal: Principal) -> None:
     lock_organization(db, row.organization_id)
     try:
@@ -71,12 +94,12 @@ def reconcile(db: Session, row: TeamSubscription, apim: ApimClient, principal: P
         apim.ensure(row.id, row.name, row.desired_state)
     except ApimError as exc:
         row.state = "failed"
-        audit(db, principal, "subscription.provision.failed", row.id)
+        audit(db, principal, "subscription.provision.failed", row.id, row.organization_id)
         db.commit()
         log.warning("APIM reconciliation failed subscription=%s status=%s", row.id, exc.status_code)
         raise HTTPException(502, "APIM operation failed; subscription reconciliation is required") from exc
     row.state = row.desired_state
-    audit(db, principal, "subscription.reconciled", row.id)
+    audit(db, principal, "subscription.reconciled", row.id, row.organization_id)
     db.commit()
 
 
@@ -86,9 +109,11 @@ def create_subscription(
     payload: SubscriptionCreate,
     idempotency_key: UUID,
     apim: ApimClient,
+    organization_id: str | None = None,
 ) -> TeamSubscription:
-    lock_organization(db, principal.organization_id)
-    sid = str(uuid5(NAMESPACE_URL, f"aiflux:{principal.organization_id}:{idempotency_key}"))
+    organization_id = organization_id or principal.organization_id
+    lock_organization(db, organization_id)
+    sid = str(uuid5(NAMESPACE_URL, f"aiflux:{organization_id}:{idempotency_key}"))
     row = db.get(TeamSubscription, sid)
     if row is not None:
         if row.name != payload.name or row.team != payload.team:
@@ -96,17 +121,22 @@ def create_subscription(
         if row.state in ("pending", "failed"):
             reconcile(db, row, apim, principal)
         return row
+    team_id = team_identity(organization_id, payload.team)
+    if db.get(Team, team_id) is None:
+        db.add(Team(id=team_id, organization_id=organization_id, name=payload.team))
+        db.flush()
     row = TeamSubscription(
         id=sid,
-        organization_id=principal.organization_id,
+        organization_id=organization_id,
         name=payload.name,
         team=payload.team,
+        team_id=team_id,
         idempotency_key=str(idempotency_key),
         state="pending",
         desired_state="active",
     )
     db.add(row)
-    audit(db, principal, "subscription.requested", row.id)
+    audit(db, principal, "subscription.requested", row.id, organization_id)
     try:
         db.commit()
     except IntegrityError:

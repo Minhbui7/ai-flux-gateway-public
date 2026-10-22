@@ -1,9 +1,8 @@
 # Customer guarded-pilot deployment
 
-Versioned-control activation below describes the full two-PR rollout. This
-infrastructure change alone retains the baseline application and schema; keep
-`gateway_controls_v2_enabled` off until the dependent application release,
-migration `0003` and compatible runtime images have been installed.
+Versioned-control activation requires both the infrastructure foundations and
+this application release. Keep `gateway_controls_v2_enabled` off until migration
+`0003` and compatible runtime images have been installed and reviewed.
 
 This is a **guided Terraform deployment**, not an unattended production release.
 One entry point creates customer-specific infrastructure, registrations and images,

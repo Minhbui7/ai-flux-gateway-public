@@ -159,9 +159,12 @@ def test_managed_native_keys_errors_and_environment_contract():
     assert 'GetValueOrDefault<int>("aiflux-request-quota-retry-after", 60)' in retry
     assert 'Math.Max(1,' in retry and 'context.Response.Headers' not in retry
     apps = (ROOT / "infra" / "terraform" / "apps.tf").read_text()
+    config = (ROOT / "services" / "control-plane" / "src" / "aiflux" / "config.py").read_text()
+    assert 'env_prefix="AIFLUX_"' in config
     for field in ("gateway_controls_v2_enabled", "gateway_protected_material_available",
                   "gateway_monthly_request_quota_available", "gateway_safety_relaxation_allowed",
                   "gateway_max_rpm", "gateway_enforcement_enabled"):
+        assert field in config
         assert "AIFLUX_" + field.upper() in apps
     assert 'AIFLUX_GATEWAY_INITIAL_SAFETY_THRESHOLD' in apps
     assert 'tostring(coalesce(var.dev_openai_content_safety_threshold, 1))' in apps

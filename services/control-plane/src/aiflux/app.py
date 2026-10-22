@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, literal, select, text, true
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -18,14 +18,26 @@ from aiflux.auth import Principal, TokenVerifier, get_admin, get_principal
 from aiflux.catalog import Catalog
 from aiflux.config import Settings, get_settings
 from aiflux.db import engine_for, get_db
-from aiflux.finops import aware, create_price, usage_csv, usage_models, usage_response, usage_series_response
+from aiflux.finops import (
+    aware,
+    create_price,
+    model_token_response,
+    usage_csv,
+    usage_models,
+    usage_response,
+    usage_series_response,
+)
 from aiflux.gateway_settings import (
     bootstrap_fragment,
+    canonical_scope,
     publish_settings,
+    refresh_subscription_bindings,
     require_scope,
     revision_output,
+    save_safety,
     save_settings,
     settings_output,
+    subscription_access,
 )
 from aiflux.models import (
     Base,
@@ -34,9 +46,12 @@ from aiflux.models import (
     ModelPrice,
     Organization,
     SafetyEvent,
+    Team,
     TeamSubscription,
 )
 from aiflux.schemas import (
+    AdminSubscriptionCreate,
+    AdminSubscriptionOutput,
     CatalogOutput,
     EnabledRequest,
     GatewayRevisionOutput,
@@ -44,10 +59,12 @@ from aiflux.schemas import (
     GatewaySettingsOutput,
     GatewaySettingsRetry,
     GatewaySettingsUpdate,
+    GatewayTarget,
     IdentityOutput,
     KeyRequest,
     MemberCreate,
     MemberOutput,
+    ModelTokenSeries,
     OrganizationCreate,
     OrganizationOutput,
     Page,
@@ -55,6 +72,7 @@ from aiflux.schemas import (
     PriceEnd,
     PriceOutput,
     SafetyOutput,
+    SafetySettingsUpdate,
     StateRequest,
     SubscriptionCreate,
     SubscriptionOutput,
@@ -62,6 +80,7 @@ from aiflux.schemas import (
     UsageSeries,
 )
 from aiflux.subscriptions import (
+    admin_owned,
     audit,
     create_subscription,
     lock_organization,
@@ -167,9 +186,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def me(principal: User) -> dict:
         return asdict(principal)
 
+    @app.get("/api/admin/gateway-targets", response_model=Page[GatewayTarget])
+    def gateway_targets(
+        principal: Admin, db: Db, organization_id: UUID | None = None,
+        offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100),
+    ) -> dict:
+        query = (
+            select(TeamSubscription, Team, Organization)
+            .join(Team, TeamSubscription.team_id == Team.id)
+            .join(Organization, TeamSubscription.organization_id == Organization.id)
+            .where(Team.organization_id == Organization.id, Organization.enabled == true())
+        )
+        if organization_id is not None:
+            query = query.where(Organization.id == str(organization_id))
+        total = db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = db.execute(
+            query.order_by(Organization.id, Team.id, TeamSubscription.id).offset(offset).limit(limit),
+        )
+        return {"items": [{
+            "organization_id": org.id, "organization_name": org.name,
+            "team_id": team.id, "team": team.name, "subscription_id": subscription.id,
+            "name": subscription.name, "state": subscription.state,
+        } for subscription, team, org in rows], "total": total}
+
+    @app.get("/api/admin/content-safety-settings", response_model=Page[GatewaySettingsOutput])
     @app.get("/api/admin/gateway-settings", response_model=Page[GatewaySettingsOutput])
     def gateway_settings(principal: Admin, db: Db) -> dict:
-        items = [settings_output(db, scope) for scope in dict.fromkeys(settings.gateway_settings_scopes)]
+        items = [
+            settings_output(db, scope, settings) for scope in dict.fromkeys(settings.gateway_settings_scopes)
+        ]
         return {"items": items, "total": len(items)}
 
     @app.put("/api/admin/gateway-settings/{scope}", response_model=GatewaySettingsOutput)
@@ -178,19 +223,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> GatewaySettingsOutput:
         return save_settings(db, settings, apim, principal, scope, payload)
 
+    @app.put("/api/admin/content-safety-settings/{scope}", response_model=GatewaySettingsOutput)
+    def safety_settings_update(
+        scope: GatewayScope, payload: SafetySettingsUpdate, principal: Admin, db: Db, apim: Apim,
+    ) -> GatewaySettingsOutput:
+        return save_safety(db, settings, apim, principal, scope, payload)
+
+    @app.post("/api/admin/content-safety-settings/{scope}/reconcile", response_model=GatewaySettingsOutput)
     @app.post("/api/admin/gateway-settings/{scope}/reconcile", response_model=GatewaySettingsOutput)
     def gateway_settings_reconcile(
         scope: GatewayScope, payload: GatewaySettingsRetry, principal: Admin, db: Db, apim: Apim,
     ) -> GatewaySettingsOutput:
         return publish_settings(db, settings, apim, principal, scope, payload.expected_version)
 
+    @app.get("/api/admin/content-safety-settings/{scope}/history", response_model=Page[GatewayRevisionOutput])
     @app.get("/api/admin/gateway-settings/{scope}/history", response_model=Page[GatewayRevisionOutput])
     def gateway_settings_history(
         scope: GatewayScope, principal: Admin, db: Db,
         offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
     ) -> dict:
         require_scope(settings, scope)
-        query = select(GatewaySettingsRevision).where(GatewaySettingsRevision.scope == scope)
+        query = select(GatewaySettingsRevision).where(
+            GatewaySettingsRevision.scope == canonical_scope(settings, scope),
+        )
         total = db.scalar(select(func.count()).select_from(query.subquery()))
         rows = db.scalars(
             query.order_by(GatewaySettingsRevision.version.desc()).offset(offset).limit(limit),
@@ -247,12 +302,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/subscriptions", status_code=201, response_model=SubscriptionOutput)
     def new_subscription(
         payload: SubscriptionCreate,
-        principal: User,
+        principal: Admin,
         db: Db,
         apim: Apim,
         idempotency_key: UUID = Header(alias="Idempotency-Key"),
     ) -> dict:
-        return subscription_dict(create_subscription(db, principal, payload, idempotency_key, apim))
+        row = create_subscription(db, principal, payload, idempotency_key, apim)
+        return refresh_access(db, row, apim, principal)
 
     @app.post("/api/subscriptions/{sid}/reveal")
     def reveal(sid: UUID, payload: KeyRequest, principal: User, db: Db, apim: Apim) -> dict:
@@ -267,34 +323,93 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"key": secret}
 
     @app.post("/api/subscriptions/{sid}/rotate")
-    def rotate(sid: UUID, payload: KeyRequest, principal: User, db: Db, apim: Apim) -> dict:
-        lock_organization(db, principal.organization_id)
-        row = owned(db, sid, principal)
+    @app.post("/api/admin/subscriptions/{sid}/rotate")
+    def rotate(sid: UUID, payload: KeyRequest, principal: Admin, db: Db, apim: Apim) -> dict:
+        row = admin_owned(db, sid)
         if row.state not in ("active", "suspended"):
             raise HTTPException(409, "Reconcile the subscription before rotating")
-        audit(db, principal, f"subscription.rotate.{payload.key}", row.id)
+        audit(db, principal, f"subscription.rotate.{payload.key}", row.id, row.organization_id)
         db.flush()
         apim.rotate(row.id, payload.key)
         db.commit()
         return {"state": row.state}
 
     @app.put("/api/subscriptions/{sid}/state", response_model=SubscriptionOutput)
-    def subscription_state(sid: UUID, payload: StateRequest, principal: User, db: Db, apim: Apim) -> dict:
-        lock_organization(db, principal.organization_id)
-        row = owned(db, sid, principal)
+    @app.put("/api/admin/subscriptions/{sid}/state", response_model=AdminSubscriptionOutput)
+    def subscription_state(sid: UUID, payload: StateRequest, principal: Admin, db: Db, apim: Apim) -> dict:
+        row = admin_owned(db, sid)
         row.desired_state = payload.state
         row.state = "pending"
-        audit(db, principal, "subscription.state.requested", row.id)
+        audit(db, principal, "subscription.state.requested", row.id, row.organization_id)
         db.commit()
         reconcile(db, row, apim, principal)
-        return subscription_dict(row)
+        return admin_subscription_output(db, row)
 
     @app.post("/api/subscriptions/{sid}/reconcile", response_model=SubscriptionOutput)
-    def subscription_reconcile(sid: UUID, principal: User, db: Db, apim: Apim) -> dict:
-        lock_organization(db, principal.organization_id)
-        row = owned(db, sid, principal)
+    @app.post("/api/admin/subscriptions/{sid}/reconcile", response_model=AdminSubscriptionOutput)
+    def subscription_reconcile(sid: UUID, principal: Admin, db: Db, apim: Apim) -> dict:
+        row = admin_owned(db, sid)
         reconcile(db, row, apim, principal)
-        return subscription_dict(row)
+        return refresh_access(db, row, apim, principal)
+
+    def admin_subscription_output(db: Session, row: TeamSubscription) -> dict:
+        org = db.get(Organization, row.organization_id)
+        access, message = subscription_access(db, settings, row.id)
+        return subscription_dict(row) | {
+            "organization_id": row.organization_id,
+            "organization_name": org.name if org else row.organization_id,
+            "team_id": row.team_id, "gateway_access": access, "gateway_message": message,
+        }
+
+    def refresh_access(db: Session, row: TeamSubscription, apim: ApimClient, principal: Principal) -> dict:
+        message = None
+        try:
+            refresh_subscription_bindings(db, settings, apim, principal, row.id)
+        except (HTTPException, ApimError) as exc:
+            db.rollback()
+            message = (str(exc.detail) if isinstance(exc, HTTPException)
+                       else "APIM gateway publication failed; reconcile to retry.")
+            log.warning("Subscription gateway access pending subscription=%s reason=%s", row.id, message)
+        result = admin_subscription_output(db, row)
+        if message:
+            result.update(gateway_access="pending", gateway_message=message)
+        return result
+
+    @app.get("/api/admin/subscriptions", response_model=Page[AdminSubscriptionOutput])
+    def admin_subscriptions(
+        principal: Admin, db: Db, organization_id: UUID | None = None,
+        offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+    ) -> dict:
+        query = select(TeamSubscription)
+        if organization_id is not None:
+            query = query.where(TeamSubscription.organization_id == str(organization_id))
+        total = db.scalar(select(func.count()).select_from(query.subquery()))
+        rows = db.scalars(query.order_by(
+            TeamSubscription.created_at.desc(), TeamSubscription.id,
+        ).offset(offset).limit(limit)).all()
+        return {"items": [admin_subscription_output(db, row) for row in rows], "total": total}
+
+    @app.post("/api/admin/subscriptions", status_code=201, response_model=AdminSubscriptionOutput)
+    def admin_new_subscription(
+        payload: AdminSubscriptionCreate, principal: Admin, db: Db, apim: Apim,
+        idempotency_key: UUID = Header(alias="Idempotency-Key"),
+    ) -> dict:
+        row = create_subscription(
+            db, principal, SubscriptionCreate(name=payload.name, team=payload.team), idempotency_key,
+            apim, str(payload.organization_id),
+        )
+        return refresh_access(db, row, apim, principal)
+
+    @app.post("/api/admin/subscriptions/{sid}/reveal")
+    def admin_reveal(sid: UUID, payload: KeyRequest, principal: Admin, db: Db, apim: Apim) -> dict:
+        row = admin_owned(db, sid)
+        if row.state != "active":
+            raise HTTPException(409, "Only active subscriptions can reveal keys")
+        audit(db, principal, f"subscription.reveal.{payload.key}", row.id, row.organization_id)
+        db.flush()
+        secret = apim.reveal(row.id, payload.key)
+        db.commit()
+        return {"key": secret}
 
     def check_usage_subscription(
         db: Session,
@@ -356,16 +471,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         check_usage_subscription(db, org, subscription_id)
         return usage_models(db, org, days, str(subscription_id) if subscription_id else None)
 
-    def usage_series(
-        db: Session,
-        organization_id: str | None,
-        days: int,
-        subscription_id: UUID | None,
-        start: datetime | None,
-        end: datetime | None,
-        model: str | None = None,
-    ) -> dict:
-        check_usage_subscription(db, organization_id, subscription_id)
+    def usage_viewport(
+        days: int, start: datetime | None, end: datetime | None,
+    ) -> tuple[datetime, datetime]:
         now = datetime.now(UTC)
         period_start = (now - timedelta(days=days)).replace(second=0, microsecond=0)
         period_end = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -379,6 +487,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(422, "Chart viewport must be inside the selected period")
         else:
             start, end = now - timedelta(days=days), now
+        return start, end
+
+    def usage_series(
+        db: Session,
+        organization_id: str | None,
+        days: int,
+        subscription_id: UUID | None,
+        start: datetime | None,
+        end: datetime | None,
+        model: str | None = None,
+    ) -> dict:
+        check_usage_subscription(db, organization_id, subscription_id)
+        start, end = usage_viewport(days, start, end)
         return usage_series_response(
             db, organization_id, str(subscription_id) if subscription_id else None, start, end, model,
         )
@@ -394,6 +515,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         model: str | None = None,
     ) -> dict:
         return usage_series(db, principal.organization_id, days, subscription_id, start, end, model)
+
+    @app.get("/api/usage/model-tokens", response_model=ModelTokenSeries)
+    def customer_model_tokens(
+        principal: User,
+        db: Db,
+        days: int = Query(30, ge=1, le=366),
+        subscription_id: UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        model: str | None = None,
+    ) -> dict:
+        check_usage_subscription(db, principal.organization_id, subscription_id)
+        start, end = usage_viewport(days, start, end)
+        return model_token_response(
+            db, principal.organization_id, str(subscription_id) if subscription_id else None,
+            start, end, model,
+        )
 
     @app.get("/api/admin/usage/timeseries", response_model=UsageSeries)
     def admin_usage_series(

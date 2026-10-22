@@ -85,4 +85,27 @@ describe("ControlApi", () => {
     const c = new ControlApi("/api", async () => "t", (async () => { throw new TypeError("x"); }) as unknown as typeof fetch);
     await expect(c.models()).rejects.toBeInstanceOf(ApiError);
   });
+  it("builds gateway target and content safety requests", async () => {
+    const { client, calls } = api(() => new Response(JSON.stringify({ items: [], total: 0 })));
+    await client.gatewayTargets(100, 100, "org 1");
+    await client.contentSafetySettings();
+    await client.contentSafetySettingsHistory("dev-openai", 10, 5);
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/admin/gateway-targets?offset=100&limit=100&organization_id=org+1",
+      "/api/admin/content-safety-settings",
+      "/api/admin/content-safety-settings/dev-openai/history?offset=10&limit=5",
+    ]);
+  });
+  it("sends content safety save and reconcile bodies", async () => {
+    const { client, calls } = api(() => new Response("{}"));
+    const cfg = { profile: "Strict" as const, hate: 1, violence: 1, sexual: 1, self_harm: 1, prompt_attack: true, protected_material: true, input_filtering: true, output_filtering: true };
+    await client.saveContentSafetySettings("dev-openai", 3, cfg, "why", true);
+    await client.reconcileContentSafetySettings("dev-openai", 3);
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(calls[0]!.url).toBe("/api/admin/content-safety-settings/dev-openai");
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ expected_version: 3, configuration: cfg, reason: "why", acknowledge_relaxation: true });
+    expect(calls[1]!.init.method).toBe("POST");
+    expect(calls[1]!.url).toBe("/api/admin/content-safety-settings/dev-openai/reconcile");
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ expected_version: 3 });
+  });
 });

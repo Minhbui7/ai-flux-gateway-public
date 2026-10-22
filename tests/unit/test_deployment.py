@@ -1219,7 +1219,7 @@ def test_migrations_use_supplied_operator_connection_without_default_credential(
     with engine.begin() as connection:
         migration.attributes["connection"] = connection
         command.upgrade(migration, "head")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
         command.upgrade(migration, "head")
     engine.dispose()
 

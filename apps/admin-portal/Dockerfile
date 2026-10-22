@@ -18,8 +18,12 @@ ENV VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID VITE_ENTRA_AUTHORITY=$VITE_ENTRA_
 RUN npm run build -w @aiflux/admin-portal
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
+LABEL com.azure.containerizationassist.createdby="containerization-assist"
+WORKDIR /usr/share/nginx/html
 # GATEWAY_ORIGIN (e.g. https://aiflux.example.com) and ENTRA_ORIGIN are substituted into the CSP at start.
 ENV GATEWAY_ORIGIN="" CONTROL_ORIGIN=""
 COPY apps/admin-portal/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /repo/apps/admin-portal/dist /usr/share/nginx/html/admin
 EXPOSE 8080
+USER 101
+HEALTHCHECK CMD wget --spider -q http://127.0.0.1:8080/healthz || exit 1

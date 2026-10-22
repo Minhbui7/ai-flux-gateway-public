@@ -233,6 +233,51 @@ def test_xml_fingerprint_ignores_whitespace_and_attribute_order():
     )
 
 
+@pytest.mark.parametrize("state", ["Succeeded", "Failed", "Canceled", "unexpected"])
+def test_fragment_publication_waits_for_arm_validation(env, monkeypatch, state):
+    env.settings.gateway_settings_scopes = ["dev-openai"]
+    client = ApimClient(env.settings)
+    operation = client._fragment_url("dev-openai") + "&azure-asyncId=test"
+    requests = []
+    responses = iter([
+        httpx.Response(200, headers={"Azure-AsyncOperation": operation}),
+        httpx.Response(200, json={"status": "InProgress"}),
+        httpx.Response(200, json={"status": state}),
+    ])
+
+    def send(method, url, *args):
+        requests.append((method, url))
+        return next(responses)
+
+    monkeypatch.setattr(client, "_send", send)
+    monkeypatch.setattr("aiflux.apim.time.sleep", lambda _: None)
+    if state == "Succeeded":
+        client.put_settings_fragment("dev-openai", "<fragment />", '"etag"')
+    else:
+        with pytest.raises(ApimError):
+            client.put_settings_fragment("dev-openai", "<fragment />", '"etag"')
+    assert requests[1:] == [("GET", operation), ("GET", operation)]
+
+
+@pytest.mark.parametrize("operation", [
+    "https://untrusted.invalid/policyFragments/aiflux-dev-openai-settings",
+    "https://management.azure.com/another-resource",
+])
+def test_fragment_operation_cannot_redirect_management_token(env, monkeypatch, operation):
+    env.settings.gateway_settings_scopes = ["dev-openai"]
+    client = ApimClient(env.settings)
+    calls = []
+
+    def send(method, url, *args):
+        calls.append(url)
+        return httpx.Response(200, headers={"Azure-AsyncOperation": operation})
+
+    monkeypatch.setattr(client, "_send", send)
+    with pytest.raises(ApimError):
+        client.put_settings_fragment("dev-openai", "<fragment />", '"etag"')
+    assert len(calls) == 1
+
+
 def test_settings_queries_compile_for_mssql_with_publication_lock(env, gateway):
     queries = []
 

@@ -19,6 +19,10 @@ const config = { clientId: "c", authority: "a", apiScope: "s", controlApiUrl: "/
 
 function withApi(handler: (url: string, init: RequestInit) => unknown) {
   const f = (async (url: string, init: RequestInit) => {
+    if (url.includes("/usage/model-tokens")) {
+      const params = new URL(url, "https://portal").searchParams;
+      return new Response(JSON.stringify({ items: [], start: params.get("start"), end: params.get("end"), interval_seconds: 86400 }));
+    }
     const r = handler(url, init);
     return r instanceof Response ? r : new Response(JSON.stringify(r), { status: 200 });
   }) as unknown as typeof fetch;
@@ -85,6 +89,7 @@ describe("UsagePage", () => {
     expect(screen.getByRole("columnheader", { name: "TTFT (s)" })).toBeInTheDocument();
   }, 10_000);
   it("requests minute aggregates independently and zooms the synchronized viewport", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
     const urls: string[] = [];
     const api = withApi((url) => {
       urls.push(url);
@@ -103,6 +108,7 @@ describe("UsagePage", () => {
     expect(new URL(first, "https://portal").searchParams.get("start")).not.toBe(new URL(latest, "https://portal").searchParams.get("start"));
     await userEvent.click(screen.getByRole("button", { name: "Reset chart zoom and pan" }));
     await waitFor(() => expect(urls.filter((url) => url.includes("timeseries")).at(-1)).toBe(first));
+    clock.mockRestore();
   }, 10_000);
   it("marks partially priced cost as lower bound", () => {
     expect(costLabel(data({ known_cost: "1.20", currency: "USD", incomplete_requests: 3 }).summary).note).toMatch(/Lower bound/);
@@ -250,8 +256,9 @@ describe("UsageCharts", () => {
 
 describe("SubscriptionsPage", () => {
   it("shows an empty state and reveals keys only on click, clearing on Hide", async () => {
-    const sub = { id: "s1", name: "Team A", team: "Data", state: "active", created_at: "2025-01-01T00:00:00Z" };
-    const api = withApi((url) => (url.endsWith("/reveal") ? { key: "SECRETKEY123" } : { items: [sub], total: 1 }));
+    const sub = { id: "s1", name: "Team A", team: "Data", organization_name: "Acme", gateway_access: "ready", state: "active", created_at: "2025-01-01T00:00:00Z" };
+    const api = withApi((url) => url.endsWith("/organizations") ? { items: [{ id: "o", name: "Acme", enabled: true }], total: 1 }
+      : url.endsWith("/reveal") ? { key: "SECRETKEY123" } : { items: [sub], total: 1 });
     wrap(api, <SubscriptionsPage />);
     await screen.findByText("Team A");
     expect(document.body.textContent).not.toContain("SECRETKEY123");

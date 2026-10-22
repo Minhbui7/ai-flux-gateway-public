@@ -1,12 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AuthGate, GatewaySettingsPage, MembersPage, OrganizationsPage, PricesPage, SafetyPage, Shell, UsagePage, type NavItem } from "@aiflux/ui";
+import { AuthGate, ContentSafetySettingsPage, GatewaySettingsPage, MembersPage, OrganizationsPage, PricesPage, SafetyPage, Shell, SubscriptionsPage, UsagePage, type NavItem } from "@aiflux/ui";
 
 const nav: NavItem[] = [
   { to: "/usage", label: "Showback" },
   { to: "/safety", label: "Safety events" },
+  { to: "/content-safety", label: "Content safety" },
   { to: "/settings", label: "Gateway settings" },
+  { to: "/subscriptions", label: "Subscriptions" },
   { to: "/organizations", label: "Organizations" },
   { to: "/members", label: "Members" },
   { to: "/prices", label: "Prices" },
@@ -21,7 +23,9 @@ createRoot(document.getElementById("root")!).render(
             <Route index element={<Navigate to="/usage" replace />} />
             <Route path="/usage" element={<UsagePage admin />} />
             <Route path="/safety" element={<SafetyPage />} />
+            <Route path="/content-safety" element={<ContentSafetySettingsPage />} />
             <Route path="/settings" element={<GatewaySettingsPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/organizations" element={<OrganizationsPage />} />
             <Route path="/members" element={<MembersPage />} />
             <Route path="/prices" element={<PricesPage />} />

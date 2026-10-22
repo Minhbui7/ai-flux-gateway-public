@@ -136,8 +136,7 @@ and [operator rollout/rollback](infrastructure.md#opt-in-admin-gateway-settings)
 Initial activation isolates counter keys by API because the two guarded surfaces
 have different TPM ceilings. Subsequent revisions retain stable keys.
 
-The new opt-in versioned policy templates prepare for a dependent application
-release; do not activate them with the baseline runtime. That release will share one complete configuration and
+The new opt-in versioned controls share one complete configuration and
 counter namespace across guarded routes/models, using the lower supported TPM
 ceiling. They add aggregate team and subscription RPM, literal-tier backend
 concurrency, calendar-partitioned request quotas and a separate safety profile.
